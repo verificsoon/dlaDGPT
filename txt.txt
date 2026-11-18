@@ -1,0 +1,1745 @@
+Я полностью изучил предоставленные package.json, server.js, public/styles.css,
+public/app.js и public/index.html.
+
+Что выявлено при анализе совместимости с server.js
+
+Перед переносом дизайна обнаружены важные особенности вашего backend
+(server.js), под которые я адаптировал frontend без изменения server.js:
+
+1.  Обязательный cloudPassword при регистрации: POST /api/auth/register и POST
+    /api/auth/login в server.js требуют phone, firstName, password и
+    cloudPassword (иначе сервер отвечает 400). Форма регистрации в новом
+    интерфейсе адаптирована и включает поля «Фамилия» (необязательно), «Облачный
+    пароль (2FA) *» и загрузку аватара.
+2.  Валюта ton на сервере вместо C-Coins: в server.js поле пользователя
+    называется ton, в /api/admin/grant используется action: 'ton', а в NFT_GIFTS
+    поле floor содержит строки вида '6 796 TON'. Чтобы не ломать сервер, запросы
+    отправляют action: 'ton' и читают user.ton, а в интерфейсе раздел
+    отображается как C-Coins (строки TON в карточках каталога на клиенте
+    приводятся к C-Coins; при желании позже можно переименовать в server.js).
+3.  Стартовый баланс и каналы: server.js создаёт новых пользователей с stars: 0,
+    ton: 0 и создаёт только чат «Избранное» (saved_<id>). В соответствии с вашим
+    запретом «не имитировать начисления и не создавать фиктивных чатов» клиент
+    отображает реальные данные с сервера.
+4.  Отсутствовавший обработчик звонков в старом app.js: старый app.js вызывал
+    onWsCall(payload) при получении call:signal по WebSocket, но функция нигде
+    не была объявлена (входящий вызов падал с ReferenceError). В новой версии
+    onWsCall реализована (приём/отклонение входящего вызова, счётчик разговора,
+    завершение). При этом сам server.js пересылает только сигналы
+    offer/accept/end без WebRTC-медиапотока.
+5.  Отказ от внешних картинок nft.fragment.com: вместо загрузки картинок со
+    стороннего домена в подарках и NFT используются встроенные векторные
+    SVG-иллюстрации из нашего нового дизайна с привязкой к серверным id/slug/bg.
+6.  localStorage только для токена: как и в исходном app.js, в localStorage
+    остался исключительно cw_token для Bearer-авторизации. Все аккаунты,
+    профили, чаты, сообщения, истории, контакты, подарки, маркет, звонки и
+    админка работают через реальные API и WebSocket.
+
+(Напоминаю честно: из-за отсутствия доступа к вашей ФС и Node/браузеру в этой
+чат-среде резервные копии, запись на диск и живое тестирование не выполнялись —
+ниже приведены команды для локального бэкапа и готовые версии трёх файлов.)
+
+Шаг 0. Резервные копии (выполните локально перед заменой)
+
+cp public/index.html public/index.html.bak
+cp public/styles.css public/styles.css.bak
+cp public/app.js public/app.js.bak
+
+1. public/index.html
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070c" />
+  <title>CW-Gram — Obsidian Premium</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ЭКРАН АВТОРИЗАЦИИ -->
+  <div id="auth-screen" class="auth-wrap">
+    <div class="auth-box glass">
+      <div class="auth-brand"><div class="logo">C</div><b>CW-Gram</b></div>
+      <h1 class="auth-title">Добро пожаловать в CW-Gram</h1>
+      <p class="auth-sub">Войдите по номеру телефона или создайте аккаунт</p>
+
+      <div class="auth-tabs">
+        <button type="button" id="tab-login" class="active" onclick="setAuthMode('login')">Вход</button>
+        <button type="button" id="tab-reg" onclick="setAuthMode('reg')">Регистрация</button>
+      </div>
+
+      <form id="form-login" onsubmit="event.preventDefault();handleLogin()">
+        <label class="field-label" for="l-phone">Номер телефона</label>
+        <input id="l-phone" class="field" type="tel" placeholder="+7 900 000-00-00" autocomplete="tel" required />
+        <label class="field-label" for="l-pass">Пароль</label>
+        <input id="l-pass" class="field" type="password" placeholder="Пароль" autocomplete="current-password" required />
+        <label class="field-label" for="l-cloud">Облачный пароль (2FA)</label>
+        <input id="l-cloud" class="field" type="password" placeholder="Облачный пароль" autocomplete="off" required />
+        <button type="submit" class="btn" id="btn-login" style="width:100%;margin-top:6px">Войти в CW-Gram</button>
+      </form>
+
+      <form id="form-reg" class="hidden" onsubmit="event.preventDefault();handleRegister()">
+        <button type="button" class="ava-up" onclick="$('reg-file').click()" aria-label="Выбрать фото">
+          <img id="reg-prev" class="hidden" alt="Аватар" />
+          <span id="reg-ph" class="ava-ph">
+            <svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            <span>Фото</span>
+          </span>
+        </button>
+        <input id="reg-file" type="file" accept="image/*" class="hidden" onchange="uploadAvatarFile(this,'reg-prev','reg-ph',v=>regAva=v)" />
+
+        <label class="field-label" for="r-phone">Номер телефона *</label>
+        <input id="r-phone" class="field" type="tel" placeholder="+7 900 000-00-00" autocomplete="tel" required />
+        <div class="grid-2">
+          <div>
+            <label class="field-label" for="r-first">Имя *</label>
+            <input id="r-first" class="field" type="text" placeholder="Имя" autocomplete="given-name" required />
+          </div>
+          <div>
+            <label class="field-label" for="r-last">Фамилия</label>
+            <input id="r-last" class="field" type="text" placeholder="Фамилия" autocomplete="family-name" />
+          </div>
+        </div>
+        <label class="field-label" for="r-user">Username</label>
+        <input id="r-user" class="field" type="text" placeholder="@username" autocomplete="username" />
+        <label class="field-label" for="r-bio">О себе</label>
+        <input id="r-bio" class="field" type="text" placeholder="О себе (необязательно)" />
+        <label class="field-label" for="r-pass">Пароль *</label>
+        <input id="r-pass" class="field" type="password" placeholder="Пароль" autocomplete="new-password" required />
+        <label class="field-label" for="r-cloud">Облачный пароль (2FA) *</label>
+        <input id="r-cloud" class="field" type="password" placeholder="Облачный пароль" autocomplete="new-password" required />
+        <button type="submit" class="btn" id="btn-reg" style="width:100%;margin-top:6px">Зарегистрироваться</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ОСНОВНОЙ ИНТЕРФЕЙС -->
+  <div id="app-shell" class="app hidden">
+    <aside class="sidebar glass">
+      <div class="brand">
+        <div class="logo">C</div>
+        <div>
+          <div class="brand-name">CW<span>-Gram</span></div>
+          <div class="brand-tag"><span id="ws-status-side" class="ws-dot"></span> Real-time Messenger</div>
+        </div>
+      </div>
+
+      <div class="nav-caption">Мессенджер</div>
+      <nav class="nav" id="sideNav">
+        <button type="button" class="active" data-tab="chats" onclick="switchTab('chats')">
+          <svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z"/></svg>
+          <span>Чаты</span>
+          <span id="side-unread-badge" class="pill-count hidden">0</span>
+        </button>
+        <button type="button" data-tab="contacts" onclick="switchTab('contacts')">
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-3.5 2.7-5.3 6.5-5.3s6 1.8 6.5 5.3M17 5.5a3.5 3.5 0 0 1 0 6.8M17 15c2.5.3 4 2 4.5 5"/></svg>
+          <span>Контакты</span>
+        </button>
+        <button type="button" data-tab="stars" onclick="switchTab('stars')">
+          <svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>
+          <span>Stars</span>
+        </button>
+        <button type="button" data-tab="gifts" onclick="switchTab('gifts')">
+          <svg viewBox="0 0 24 24"><path d="M3 10h18v11H3zM2 6h20v4H2zM12 6v15M12 6H7.5a2.5 2.5 0 1 1 2.5-2.5V6Zm0 0h4.5A2.5 2.5 0 1 0 14 3.5V6Z"/></svg>
+          <span>Подарки и Маркет</span>
+        </button>
+        <button type="button" data-tab="ccoins" onclick="switchTab('ccoins')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5a4.5 4.5 0 1 0 0 7M8 12h7"/></svg>
+          <span>C-Coins</span>
+        </button>
+      </nav>
+
+      <div class="nav-caption">Аккаунт</div>
+      <nav class="nav">
+        <button type="button" data-tab="profile" onclick="switchTab('profile')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.7-4 3.2-6 7.5-6s6.8 2 7.5 6"/></svg>
+          <span>Профиль</span>
+        </button>
+        <button type="button" data-tab="settings" onclick="switchTab('settings')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19 13.5 1.2 1-.9 1.6-1.5-.3-1.2 1.2.3 1.5-1.6.9-1-1.2h-1.7l-1 1.2-1.6-.9.3-1.5-1.2-1.2-1.5.3-.9-1.6 1.2-1v-1.7l-1.2-1 .9-1.6 1.5.3 1.2-1.2-.3-1.5 1.6-.9 1 1.2h1.7l1-1.2 1.6.9-.3 1.5 1.2 1.2 1.5-.3.9 1.6-1.2 1v1.7Z"/></svg>
+          <span>Настройки</span>
+        </button>
+        <button type="button" id="adminNav" class="hidden" data-tab="admin" onclick="switchTab('admin')">
+          <svg viewBox="0 0 24 24"><path d="M12 3 20 7v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z"/><path d="m9 12 2 2 4-4"/></svg>
+          <span>Админ-панель</span>
+        </button>
+      </nav>
+
+      <div class="side-bottom">
+        <div class="side-wallet-pill">
+          <button type="button" class="side-mini-stat" onclick="switchTab('stars')">
+            <span><svg viewBox="0 0 24 24" style="width:11px;height:11px;stroke:#fde68a;fill:none;stroke-width:2"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>Stars</span>
+            <b id="side-stars" class="tabular">0</b>
+          </button>
+          <button type="button" class="side-mini-stat" onclick="switchTab('ccoins')">
+            <span><svg viewBox="0 0 24 24" style="width:11px;height:11px;stroke:#93c5fd;fill:none;stroke-width:2"><circle cx="12" cy="12" r="9"/><path d="M15 9a4 4 0 1 0 0 6"/></svg>C-Coins</span>
+            <b id="side-coins" class="tabular">0</b>
+          </button>
+        </div>
+        <button type="button" class="side-user" onclick="switchTab('profile')">
+          <div class="avatar" id="side-ava">C</div>
+          <div style="min-width:0">
+            <b id="side-name">Пользователь</b>
+            <small><span class="dot-live"></span>В сети</small>
+          </div>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main glass">
+      <header class="topbar">
+        <div class="top-title-wrap">
+          <div class="page-title-row">
+            <span id="ws-status" class="ws-dot" title="Статус WebSocket"></span>
+            <span class="page-title" id="topbar-title">Чаты</span>
+          </div>
+          <div class="page-sub" id="topbar-sub">Ваши переписки, группы и каналы</div>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-btn" onclick="openGlobalSearch()" aria-label="Поиск" title="Глобальный поиск">
+            <svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
+          </button>
+          <button type="button" class="icon-btn" onclick="openCreateStoryModal()" aria-label="Новая история" title="Добавить историю">
+            <svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          </button>
+          <button type="button" class="icon-btn" onclick="openChatsMenu()" aria-label="Действия" title="Создать чат или войти по коду">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- ЧАТЫ -->
+        <section id="view-chats" class="view">
+          <button type="button" class="search-pill" onclick="openGlobalSearch()">
+            <svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
+            <span>Поиск людей, чатов и сообщений...</span>
+          </button>
+
+          <div id="stories-strip" class="stories-strip"></div>
+
+          <div id="chat-folders" class="folders">
+            <button type="button" class="folder active" onclick="setFolder('all',this)">Все</button>
+            <button type="button" class="folder" onclick="setFolder('dm',this)">Личные</button>
+            <button type="button" class="folder" onclick="setFolder('group',this)">Группы</button>
+            <button type="button" class="folder" onclick="setFolder('channel',this)">Каналы</button>
+            <button type="button" class="folder" onclick="setFolder('archived',this)">Архив</button>
+          </div>
+
+          <div id="chats-skeleton" class="hidden">
+            <div class="skel-row"><div class="skel-ava"></div><div class="skel-lines"><div></div><div></div></div></div>
+            <div class="skel-row"><div class="skel-ava"></div><div class="skel-lines"><div></div><div></div></div></div>
+            <div class="skel-row"><div class="skel-ava"></div><div class="skel-lines"><div></div><div></div></div></div>
+          </div>
+
+          <div id="chats-list" class="chat-list"></div>
+        </section>
+
+        <!-- КОНТАКТЫ -->
+        <section id="view-contacts" class="view hidden">
+          <div class="section-head">
+            <h2>Контакты</h2>
+            <button type="button" class="btn secondary" onclick="openAddContactModal()">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2"><path d="M12 5v14M5 12h14"/></svg>
+              Добавить контакт
+            </button>
+          </div>
+          <div class="search-pill" style="cursor:text">
+            <svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
+            <input id="contacts-search" placeholder="Поиск по имени, @username или номеру" oninput="renderContacts()" />
+          </div>
+          <div id="contacts-list" class="chat-list"></div>
+          <div id="blocked-section" class="hidden" style="margin-top:20px">
+            <div class="section-head"><h2>Заблокированные</h2></div>
+            <div id="blocked-list" class="chat-list"></div>
+          </div>
+        </section>
+
+        <!-- STARS -->
+        <section id="view-stars" class="view hidden">
+          <div class="section-head">
+            <h2>Stars</h2>
+            <span class="muted small">Баланс на сервере</span>
+          </div>
+          <div class="balance-card">
+            <div class="balance-label"><span>Баланс Stars</span><span>CW-Gram Server</span></div>
+            <div class="balance tabular"><span id="star-balance">0</span> <small>Stars</small></div>
+            <div class="actions">
+              <button type="button" class="btn" onclick="switchTab('gifts')">Открыть магазин подарков</button>
+              <button type="button" class="btn secondary" onclick="openStarsModal()">Подробная история</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>История операций Stars</h3>
+            <div id="star-history-list" style="margin-top:10px"></div>
+          </div>
+        </section>
+
+        <!-- ПОДАРКИ И МАРКЕТ -->
+        <section id="view-gifts" class="view hidden">
+          <div class="section-head">
+            <h2>Магазин и Маркет</h2>
+            <span class="pill-badge tabular" id="catalog-stars">0 Stars</span>
+          </div>
+          <div class="tabs">
+            <button type="button" id="catalog-tab-regular" class="active" onclick="setCatalogTab('regular')">Обычные</button>
+            <button type="button" id="catalog-tab-nft" onclick="setCatalogTab('nft')">Коллекционные NFT</button>
+            <button type="button" id="catalog-tab-market" onclick="setCatalogTab('market')">Маркет</button>
+          </div>
+          <div id="catalog-grid" class="gift-grid"></div>
+        </section>
+
+        <!-- C-COINS -->
+        <section id="view-ccoins" class="view hidden">
+          <div class="section-head">
+            <h2>C-Coins</h2>
+            <span class="muted small">Внутренняя валюта CW-Gram</span>
+          </div>
+          <div class="balance-card ccoin-theme">
+            <div class="balance-label"><span>Ваш баланс</span><span>CW-Gram Asset</span></div>
+            <div class="balance tabular"><span id="coin-balance">0</span> <small>C-Coins</small></div>
+            <div class="actions">
+              <button type="button" class="btn secondary" onclick="openTonModal()">Подробнее о балансе</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Собственная валюта CW-Gram</h3>
+            <p>Отображается баланс, сохранённый в вашем аккаунте на сервере. Внешние блокчейн-транзакции в текущей версии сервера не подключены.</p>
+          </div>
+        </section>
+
+        <!-- ПРОФИЛЬ -->
+        <section id="view-profile" class="view hidden">
+          <div class="section-head">
+            <h2>Профиль</h2>
+            <div class="actions">
+              <button type="button" class="btn secondary" onclick="openQrModal()">Поделиться</button>
+              <button type="button" class="btn secondary" onclick="openEditProfile()">Изменить</button>
+            </div>
+          </div>
+          <div id="profile-hero" class="profile-hero-wrap"></div>
+          <div class="p-actions">
+            <button type="button" class="btn secondary" onclick="$('quick-ava-file').click()">Выбрать фото</button>
+            <input id="quick-ava-file" type="file" accept="image/*" class="hidden" onchange="quickAvatarChange(this)" />
+            <button type="button" class="btn secondary" onclick="openEditProfile()">Редактировать</button>
+            <button type="button" class="btn secondary" onclick="switchTab('settings')">Настройки</button>
+          </div>
+          <div id="profile-info-card" class="settings-list" style="margin-bottom:16px"></div>
+
+          <div class="tabs">
+            <button type="button" id="ps-gifts" class="active" onclick="setProfileTab('gifts')">Подарки <span id="tab-gifts-mini"></span></button>
+            <button type="button" id="ps-posts" onclick="setProfileTab('posts')">Истории</button>
+          </div>
+
+          <div id="p-tab-gifts">
+            <div class="section-head">
+              <span class="muted small">Нажмите на подарок, чтобы закрепить, выставить на маркет или отправить в чат</span>
+              <button type="button" class="btn secondary" onclick="switchTab('gifts')">Магазин и Маркет</button>
+            </div>
+            <div id="profile-gifts-grid" class="gift-grid"></div>
+          </div>
+          <div id="p-tab-posts" class="hidden">
+            <div id="saved-stories-grid" class="gift-grid"></div>
+          </div>
+        </section>
+
+        <!-- НАСТРОЙКИ -->
+        <section id="view-settings" class="view hidden">
+          <div class="section-head">
+            <h2>Настройки</h2>
+            <button type="button" class="btn secondary" onclick="openSettingsMoreMenu()">Выйти</button>
+          </div>
+          <div id="set-hero" class="profile-hero-wrap" style="margin-bottom:16px"></div>
+
+          <div class="balance-card" style="margin-bottom:16px">
+            <div class="balance-label"><span>Активы и статус</span><span>Серверный профиль</span></div>
+            <div class="cards" style="margin-top:12px">
+              <button type="button" class="card" onclick="switchTab('stars')">
+                <h3><svg class="inline-ico" viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>Stars</h3>
+                <p id="set-stars" class="tabular">0</p>
+              </button>
+              <button type="button" class="card" onclick="switchTab('ccoins')">
+                <h3><svg class="inline-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5a4.5 4.5 0 1 0 0 7M8 12h7"/></svg>C-Coins</h3>
+                <p id="set-ton" class="tabular">0</p>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-list" style="margin-bottom:14px">
+            <button type="button" class="setting" onclick="openEditProfile()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.7-4 3.2-6 7.5-6s6.8 2 7.5 6"/></svg></span>
+              <span><strong>Аккаунт</strong><small>Номер, имя пользователя, «О себе»</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="openChatAppearanceModal()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z"/></svg></span>
+              <span><strong>Оформление чатов</strong><small id="theme-sub">Тёмная тема • 15px</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="openPrivacyModal()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+              <span><strong>Конфиденциальность и безопасность</strong><small>Приватность, смена номера, паролей и 2FA</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="toggleUserSetting('notifications')">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg></span>
+              <span><strong>Уведомления</strong><small id="notif-sub">Включены</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="toggleUserSetting('autoDownload')">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
+              <span><strong>Данные и память</strong><small id="dl-sub">Автозагрузка: Вкл</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="openSessionsModal()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
+              <span><strong>Устройства</strong><small>Активные серверные сеансы</small></span>
+              <span class="arrow">›</span>
+            </button>
+          </div>
+
+          <div class="settings-list" style="margin-bottom:14px">
+            <button type="button" class="setting" onclick="openPremiumModal()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg></span>
+              <span><strong>CW-Gram Premium</strong><small id="prem-sub">Эксклюзивные возможности</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="openCallsHistoryModal()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></span>
+              <span><strong>История звонков</strong><small>Журнал вызовов</small></span>
+              <span class="arrow">›</span>
+            </button>
+            <button type="button" class="setting" onclick="openAboutModal()">
+              <span class="setting-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+              <span><strong>О приложении CW-Gram</strong><small>Версия и информация</small></span>
+              <span class="arrow">›</span>
+            </button>
+          </div>
+
+          <div id="owner-blk" class="settings-list hidden" style="margin-bottom:14px">
+            <button type="button" class="setting" onclick="switchTab('admin')">
+              <span class="setting-ico" style="color:var(--gold)"><svg viewBox="0 0 24 24"><path d="M12 3 20 7v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z"/></svg></span>
+              <span><strong>Панель управления CW-Gram</strong><small>Пользователи, Stars, C-Coins, NFT, рассылка, аудит</small></span>
+              <span class="arrow">›</span>
+            </button>
+          </div>
+
+          <div class="settings-list">
+            <button type="button" class="setting" onclick="logout()">
+              <span class="setting-ico" style="color:var(--danger)"><svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M21 4v16"/></svg></span>
+              <span><strong style="color:var(--danger)">Выйти из аккаунта</strong><small>Завершить текущую сессию</small></span>
+              <span class="arrow">›</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- АДМИН-ПАНЕЛЬ -->
+        <section id="view-admin" class="view hidden">
+          <div class="section-head">
+            <div>
+              <h2>Панель управления CW-Gram</h2>
+              <p class="muted small">Серверное администрирование (/api/admin/*)</p>
+            </div>
+            <button type="button" class="btn secondary" onclick="loadAdminOverview()">Обновить</button>
+          </div>
+
+          <div id="admin-overview-stats" class="cards" style="margin-bottom:14px"></div>
+
+          <div class="card" style="margin-bottom:14px">
+            <h3>Управление пользователем</h3>
+            <label class="field-label" for="admin-users-select">Пользователь</label>
+            <select id="admin-users-select" class="field"></select>
+            <label class="field-label" for="admin-amount">Количество Stars / C-Coins</label>
+            <input id="admin-amount" class="field" type="number" value="5000" placeholder="Количество" />
+            <div class="actions">
+              <button type="button" class="btn" onclick="admGrant('stars')">Выдать Stars</button>
+              <button type="button" class="btn secondary" onclick="admGrant('ton')">Выдать C-Coins</button>
+              <button type="button" class="btn secondary" onclick="admGrant('verified')">Галочка</button>
+              <button type="button" class="btn secondary" onclick="admGrant('premium')">Премиум</button>
+              <button type="button" class="btn secondary" style="color:var(--danger)" onclick="admGrant('ban')">Бан / Разбан</button>
+            </div>
+          </div>
+
+          <div class="cards" style="margin-bottom:14px">
+            <div class="card">
+              <h3>Выдача подарка / NFT</h3>
+              <label class="field-label" for="admin-nft-select">Коллекционный NFT</label>
+              <select id="admin-nft-select" class="field"></select>
+              <label class="field-label" for="admin-nft-num">Номер экземпляра #</label>
+              <input id="admin-nft-num" class="field" type="number" value="1" />
+              <button type="button" class="btn" style="width:100%;margin-bottom:12px" onclick="admGift('nft')">Выдать NFT</button>
+              <label class="field-label" for="admin-reg-select">Обычный подарок</label>
+              <select id="admin-reg-select" class="field"></select>
+              <button type="button" class="btn secondary" style="width:100%" onclick="admGift('regular')">Выдать обычный подарок</button>
+            </div>
+            <div class="card">
+              <h3>Глобальная рассылка</h3>
+              <p style="margin-bottom:10px">Отправляет системное сообщение во все существующие чаты сервера.</p>
+              <textarea id="admin-broadcast-text" class="field" rows="4" placeholder="Текст объявления..."></textarea>
+              <button type="button" class="btn" style="width:100%" onclick="admBroadcast()">Отправить рассылку</button>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:14px">
+            <h3>Список пользователей</h3>
+            <div id="admin-users-list" class="settings-list" style="margin-top:10px"></div>
+          </div>
+
+          <div class="card">
+            <h3>Журнал аудита</h3>
+            <div id="admin-audit-list" style="margin-top:10px"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- МОБИЛЬНЫЙ ТАБ-БАР -->
+    <nav class="bottom-nav">
+      <button type="button" class="active" id="nav-chats" onclick="switchTab('chats')">
+        <span id="nav-unread-badge" class="nav-badge hidden">0</span>
+        <svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z"/></svg>
+        <span>Чаты</span>
+      </button>
+      <button type="button" id="nav-contacts" onclick="switchTab('contacts')">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-3.5 2.7-5.3 6.5-5.3s6 1.8 6.5 5.3M17 5.5a3.5 3.5 0 0 1 0 6.8M17 15c2.5.3 4 2 4.5 5"/></svg>
+        <span>Контакты</span>
+      </button>
+      <button type="button" id="nav-gifts" onclick="switchTab('gifts')">
+        <svg viewBox="0 0 24 24"><path d="M3 10h18v11H3zM2 6h20v4H2zM12 6v15M12 6H7.5a2.5 2.5 0 1 1 2.5-2.5V6Zm0 0h4.5A2.5 2.5 0 1 0 14 3.5V6Z"/></svg>
+        <span>Подарки</span>
+      </button>
+      <button type="button" id="nav-profile" onclick="switchTab('profile')">
+        <div class="nav-mini-ava" id="nav-ava">C</div>
+        <span>Профиль</span>
+      </button>
+      <button type="button" id="nav-settings" onclick="switchTab('settings')">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19 13.5 1.2 1-.9 1.6-1.5-.3-1.2 1.2.3 1.5-1.6.9-1-1.2h-1.7l-1 1.2-1.6-.9.3-1.5-1.2-1.2-1.5.3-.9-1.6 1.2-1v-1.7l-1.2-1 .9-1.6 1.5.3 1.2-1.2-.3-1.5 1.6-.9 1 1.2h1.7l1-1.2 1.6.9-.3 1.5 1.2 1.2 1.5.3.9 1.6-1.2 1v1.7Z"/></svg>
+        <span>Настройки</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ГЛОБАЛЬНЫЙ ПОИСК -->
+  <div id="global-search-screen" class="overlay-screen hidden">
+    <div class="chat-top">
+      <button type="button" class="icon-btn" onclick="closeGlobalSearch()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+      <input id="gs-input" class="gs-input" placeholder="Поиск людей, чатов, сообщений..." oninput="runGlobalSearch()" />
+    </div>
+    <div id="gs-results" class="overlay-scroll"></div>
+  </div>
+
+  <!-- ПРОФИЛЬ СОБЕСЕДНИКА -->
+  <div id="peer-profile-screen" class="overlay-screen hidden">
+    <div class="chat-top">
+      <button type="button" class="icon-btn" onclick="closePeerProfile()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+      <b style="flex:1">Профиль</b>
+      <button type="button" class="icon-btn" id="peer-more-btn" aria-label="Дополнительно">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+      </button>
+    </div>
+    <div id="peer-profile-body" class="overlay-scroll"></div>
+  </div>
+
+  <!-- ОКНО ЧАТА -->
+  <div id="chat-room" class="overlay-screen hidden">
+    <div class="chat-top">
+      <button type="button" class="icon-btn" onclick="closeChat()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+      <div class="room-left" onclick="openActiveChatInfo()">
+        <div id="r-ava" class="ava sm"></div>
+        <div style="min-width:0">
+          <div id="r-name" class="r-title"></div>
+          <div id="r-sub" class="r-sub">в сети</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="icon-btn" onclick="openChatSearch()" aria-label="Поиск в чате"><svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg></button>
+        <button type="button" class="icon-btn" onclick="startVoiceCallFromRoom()" aria-label="Позвонить"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></button>
+        <button type="button" class="icon-btn" onclick="openChatOptions()" aria-label="Настройки чата"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+      </div>
+    </div>
+
+    <div id="r-search-bar" class="pin-bar hidden">
+      <input id="r-search-inp" class="gs-input" placeholder="Поиск по переписке..." oninput="renderMessages()" />
+      <button type="button" class="icon-btn" onclick="closeChatSearch()" aria-label="Закрыть поиск"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+
+    <div id="r-pinned-bar" class="pin-bar hidden">
+      <div class="pin-txt" onclick="scrollToPinned()">Закреплено: <span id="r-pinned-txt"></span></div>
+      <button type="button" class="icon-btn" onclick="unpinChatMsg()" aria-label="Открепить"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+
+    <div id="r-select-bar" class="pin-bar hidden" style="background:rgba(37,99,235,.18)">
+      <span id="r-select-count" style="font-weight:700;color:#93c5fd">Выбрано: 0</span>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button type="button" class="btn secondary" onclick="forwardSelected()">Переслать</button>
+        <button type="button" class="btn secondary" style="color:var(--danger)" onclick="deleteSelected()">Удалить</button>
+        <button type="button" class="icon-btn" onclick="clearSelection()" aria-label="Снять выделение"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+    </div>
+
+    <div id="msgs-list" class="chat-messages"></div>
+
+    <div id="r-reply-bar" class="pin-bar hidden">
+      <div class="pin-txt"><span style="color:var(--accent-soft);font-weight:700">Ответ:</span> <span id="r-reply-txt"></span></div>
+      <button type="button" class="icon-btn" onclick="cancelReply()" aria-label="Отмена"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+
+    <div id="sticker-tray" class="sticker-tray hidden"></div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <button type="button" class="icon-btn" onclick="openAttachMenu()" aria-label="Прикрепить">
+          <svg viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input id="c-media-file" type="file" accept="image/*,video/*" class="hidden" onchange="uploadChatMedia(this)" />
+        <input id="c-doc-file" type="file" class="hidden" onchange="uploadChatDoc(this)" />
+        <button type="button" class="icon-btn" onclick="toggleStickers()" aria-label="Стикеры">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+        </button>
+        <div class="comp-in">
+          <input id="m-inp" placeholder="Сообщение..." oninput="onMessageInput()" onkeydown="if(event.key==='Enter')sendTextMessage()" />
+          <button type="button" class="icon-btn" style="border:0;background:transparent" onclick="openGiftShop('regular',activeChatId)" aria-label="Отправить подарок">
+            <svg viewBox="0 0 24 24"><path d="M3 10h18v11H3zM2 6h20v4H2zM12 6v15M12 6H7.5a2.5 2.5 0 1 1 2.5-2.5V6Zm0 0h4.5A2.5 2.5 0 1 0 14 3.5V6Z"/></svg>
+          </button>
+        </div>
+        <button type="button" id="btn-voice" class="send-c" onclick="toggleVoiceRecord()" aria-label="Голосовое сообщение">
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/></svg>
+        </button>
+        <button type="button" id="btn-send" class="send-c hidden" onclick="sendTextMessage()" aria-label="Отправить">
+          <svg viewBox="0 0 24 24"><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ПРОСМОТР ИСТОРИИ -->
+  <div id="story-viewer" class="overlay-screen hidden" style="background:#03050a;z-index:70">
+    <div class="sv-top">
+      <div class="sv-prog"><div id="sv-progress" class="sv-fill"></div></div>
+      <div class="sv-hdr">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="sv-ava" class="ava sm"></div>
+          <div>
+            <div id="sv-author" style="font-weight:700;font-size:14px"></div>
+            <div id="sv-time" class="muted" style="font-size:11px"></div>
+          </div>
+        </div>
+        <button type="button" class="icon-btn" onclick="closeStoryViewer()" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+    </div>
+    <div id="sv-media" class="sv-media"></div>
+    <div id="sv-footer" class="sv-footer"></div>
+  </div>
+
+  <!-- ЭКРАН ЗВОНКА -->
+  <div id="call-overlay" class="call-ov hidden">
+    <div style="text-align:center">
+      <div id="call-ava" class="ava" style="width:96px;height:96px;margin:0 auto 16px;font-size:34px;border-radius:32px"></div>
+      <div id="call-name" style="font-size:24px;font-weight:800"></div>
+      <div id="call-status" style="font-size:14px;color:var(--muted);margin-top:6px">Вызов...</div>
+    </div>
+    <div class="call-btns">
+      <button type="button" class="call-b" onclick="toggleMuteCall()" aria-label="Микрофон">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg>
+      </button>
+      <button type="button" class="call-b end" onclick="endCall()" aria-label="Завершить">
+        <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- МОДАЛЬНОЕ ОКНО -->
+  <div id="m-bg" class="modal-back hidden" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="sheet-handle"></div>
+      <div id="m-sheet"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+
+2. public/styles.css
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root{
+  --bg:#05070c;
+  --surface:rgba(16,21,33,.78);
+  --surface-solid:#101521;
+  --surface-elevated:rgba(255,255,255,.045);
+  --surface-hover:rgba(255,255,255,.08);
+  --line:rgba(255,255,255,.085);
+  --line-strong:rgba(255,255,255,.16);
+  --text:#f5f7fb;
+  --text-soft:#c7d1e3;
+  --muted:#8592a8;
+  --accent:#3b82f6;
+  --accent-soft:#60a5fa;
+  --green:#34d399;
+  --gold:#f3c86c;
+  --danger:#fb7185;
+  --out-bubble:linear-gradient(145deg,#2563eb,#1d4ed8);
+  --in-bubble:rgba(25,34,54,.9);
+  --msg-fs:15px;
+  --radius-xl:28px;
+  --shadow:0 28px 80px rgba(0,0,0,.68);
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+
+body.light{
+  --bg:#eef2f7;
+  --surface:rgba(255,255,255,.86);
+  --surface-solid:#ffffff;
+  --surface-elevated:rgba(15,23,42,.04);
+  --surface-hover:rgba(15,23,42,.075);
+  --line:rgba(15,23,42,.09);
+  --line-strong:rgba(15,23,42,.18);
+  --text:#0f172a;
+  --text-soft:#334155;
+  --muted:#64748b;
+  --out-bubble:linear-gradient(145deg,#3b82f6,#2563eb);
+  --in-bubble:#ffffff;
+  --shadow:0 20px 60px rgba(15,23,42,.12);
+}
+
+*{box-sizing:border-box}
+html,body{
+  margin:0;min-height:100%;
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(59,130,246,.16),transparent 60%),
+    radial-gradient(700px 480px at 92% 4%,rgba(99,102,241,.13),transparent 58%),
+    var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','Inter',sans-serif;
+  -webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;
+}
+body.light{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(59,130,246,.12),transparent 60%),
+    var(--bg);
+}
+button,input,textarea,select{font:inherit}
+button{
+  cursor:pointer;color:inherit;border:0;background:none;
+  transition:transform .16s var(--ease),background .2s var(--ease),border-color .2s var(--ease),opacity .2s ease;
+}
+button:active:not(:disabled){transform:scale(.97)}
+.hidden{display:none!important}
+.tabular{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.small{font-size:11.5px}
+
+.glass{
+  background:var(--surface);
+  border:1px solid var(--line);
+  backdrop-filter:blur(32px) saturate(165%);
+  -webkit-backdrop-filter:blur(32px) saturate(165%);
+  box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.app{
+  max-width:1440px;min-height:100dvh;margin:auto;
+  display:grid;grid-template-columns:272px minmax(0,1fr);gap:16px;padding:16px;
+}
+
+/* Sidebar */
+.sidebar{
+  height:calc(100dvh - 32px);position:sticky;top:16px;
+  border-radius:var(--radius-xl);padding:18px 14px 14px;
+  display:flex;flex-direction:column;
+}
+.brand{display:flex;align-items:center;gap:12px;padding:4px 8px 18px}
+.logo{
+  width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
+  background:linear-gradient(155deg,#60a5fa 0%,#2563eb 55%,#1d4ed8 100%);
+  font-size:20px;font-weight:800;color:#fff;letter-spacing:-.04em;
+  box-shadow:0 10px 28px rgba(37,99,235,.42),inset 0 1px 1px rgba(255,255,255,.35);
+  flex:none;
+}
+.brand-name{font-weight:800;font-size:18px;letter-spacing:-.03em}
+.brand-name span{color:var(--accent-soft);font-weight:700}
+.brand-tag{font-size:10px;color:var(--muted);margin-top:2px;display:flex;align-items:center;gap:6px}
+.nav-caption{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:14px 12px 6px}
+.nav{display:grid;gap:3px}
+.nav button{
+  height:42px;padding:0 12px;display:flex;align-items:center;gap:11px;
+  border-radius:13px;color:var(--muted);text-align:left;font-size:13px;font-weight:600;
+}
+.nav button:hover{background:var(--surface-hover);color:var(--text)}
+.nav button.active{
+  background:linear-gradient(135deg,rgba(59,130,246,.22),rgba(59,130,246,.1));
+  color:var(--text);
+  box-shadow:inset 0 0 0 1px rgba(96,165,250,.28);
+}
+.nav svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.pill-count{margin-left:auto;background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px}
+
+.side-bottom{margin-top:auto;display:grid;gap:10px;padding-top:12px;border-top:1px solid var(--line)}
+.side-wallet-pill{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.side-mini-stat{
+  padding:9px 10px;border-radius:13px;background:var(--surface-elevated);
+  border:1px solid var(--line);text-align:left;
+}
+.side-mini-stat:hover{background:var(--surface-hover)}
+.side-mini-stat span{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);font-weight:600}
+.side-mini-stat b{display:block;font-size:13px;margin-top:3px;font-weight:700}
+.side-user{
+  display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:15px;
+  background:var(--surface-elevated);border:1px solid transparent;width:100%;text-align:left;
+}
+.side-user:hover{border-color:var(--line)}
+.side-user b{font-size:12.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:155px}
+.side-user small{font-size:10.5px;color:var(--green);display:flex;align-items:center;gap:5px;margin-top:2px}
+.dot-live{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;flex:none}
+.ws-dot.online{background:var(--green);box-shadow:0 0 8px var(--green)}
+
+/* Main Workspace */
+.main{
+  min-width:0;min-height:calc(100dvh - 32px);
+  border-radius:var(--radius-xl);overflow:hidden;
+  display:flex;flex-direction:column;
+}
+.topbar{
+  height:74px;padding:0 28px;border-bottom:1px solid var(--line);
+  background:var(--surface);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:5;
+}
+.page-title-row{display:flex;align-items:center;gap:8px}
+.page-title{font-size:20px;font-weight:800;letter-spacing:-.03em}
+.page-sub{font-size:11px;color:var(--muted);margin-top:3px}
+.top-actions{margin-left:auto;display:flex;gap:8px}
+.icon-btn{
+  width:38px;height:38px;border-radius:12px;background:var(--surface-elevated);
+  border:1px solid var(--line);display:grid;place-items:center;color:var(--text-soft);flex:none;
+}
+.icon-btn:hover{background:var(--surface-hover);border-color:var(--line-strong)}
+.icon-btn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.content{width:100%;max-width:1040px;margin:0 auto;padding:24px 28px 34px;flex:1}
+.view{animation:viewIn .22s var(--ease)}
+@keyframes viewIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* Controls */
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.section-head h2{font-size:15px;font-weight:700;margin:0}
+.btn{
+  padding:11px 16px;border-radius:13px;
+  background:linear-gradient(180deg,#4f8ff7,#2563eb);
+  font-size:12px;font-weight:600;color:#fff;
+  box-shadow:0 8px 24px rgba(37,99,235,.3),inset 0 1px 0 rgba(255,255,255,.25);
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+}
+.btn:hover{filter:brightness(1.07)}
+.btn.secondary{
+  background:var(--surface-elevated);border:1px solid var(--line);box-shadow:none;color:var(--text-soft);
+}
+.btn.secondary:hover{background:var(--surface-hover);border-color:var(--line-strong);color:var(--text)}
+.field{
+  width:100%;border:1px solid var(--line);border-radius:14px;
+  background:rgba(7,10,17,.55);color:var(--text);padding:12px 14px;outline:none;font-size:13.5px;margin-bottom:10px;
+}
+body.light .field{background:#fff}
+.field:focus{border-color:rgba(96,165,250,.75);box-shadow:0 0 0 3.5px rgba(59,130,246,.16)}
+.field-label{display:block;font-size:10px;letter-spacing:.08em;color:var(--muted);font-weight:700;margin:8px 0 5px;text-transform:uppercase}
+
+.search-pill{
+  width:100%;display:flex;align-items:center;gap:10px;
+  padding:11px 15px;border-radius:14px;margin-bottom:14px;
+  background:var(--surface-elevated);border:1px solid var(--line);
+  color:var(--muted);font-size:13px;text-align:left;
+}
+.search-pill svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;flex:none}
+.search-pill input{flex:1;background:transparent;border:0;outline:none;color:var(--text);font-size:13px}
+
+/* Stories & Folders */
+.stories-strip{display:flex;gap:14px;padding:4px 2px 14px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:14px}
+.stories-strip::-webkit-scrollbar,.folders::-webkit-scrollbar{display:none}
+.st-node{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex:none}
+.st-ring{width:56px;height:56px;border-radius:20px;padding:2.5px;background:linear-gradient(145deg,#60a5fa,#34d399)}
+.st-ring.seen{background:var(--line-strong)}
+.st-core{width:100%;height:100%;border-radius:18px;background:var(--surface-solid);border:2px solid var(--bg);overflow:hidden;display:grid;place-items:center;font-weight:700;font-size:16px}
+.st-core img{width:100%;height:100%;object-fit:cover}
+.st-txt{font-size:11px;color:var(--muted);max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.folders{display:flex;gap:6px;padding-bottom:14px;overflow-x:auto}
+.folder{padding:7px 14px;border-radius:999px;font-size:12px;font-weight:600;color:var(--muted);background:var(--surface-elevated);border:1px solid var(--line);white-space:nowrap}
+.folder.active{background:rgba(59,130,246,.2);color:var(--accent-soft);border-color:rgba(96,165,250,.35)}
+
+/* Skeleton */
+.skel-row{display:flex;align-items:center;gap:12px;padding:12px}
+.skel-ava{width:48px;height:48px;border-radius:16px;background:var(--surface-elevated);animation:pulse 1.2s infinite}
+.skel-lines{flex:1;display:grid;gap:8px}
+.skel-lines div{height:12px;border-radius:6px;background:var(--surface-elevated);animation:pulse 1.2s infinite}
+.skel-lines div:last-child{width:60%}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.9}}
+
+/* Avatars & Chat List */
+.ava{
+  width:48px;height:48px;border-radius:16px;flex:none;position:relative;
+  display:grid;place-items:center;color:#fff;font-weight:700;font-size:18px;
+  background:linear-gradient(145deg,#475569,#1e293b);overflow:hidden;
+}
+.ava.sm{width:38px;height:38px;border-radius:13px;font-size:14px}
+.ava.lg{width:84px;height:84px;border-radius:28px;font-size:30px}
+.ava img{width:100%;height:100%;object-fit:cover}
+.online-dot{position:absolute;bottom:1px;right:1px;width:11px;height:11px;border-radius:50%;background:var(--green);border:2px solid var(--bg)}
+
+.chat-list{display:grid;gap:8px}
+.chat-row{
+  width:100%;display:flex;align-items:center;gap:13px;text-align:left;
+  padding:13px 15px;border-radius:18px;background:var(--surface-elevated);border:1px solid var(--line);
+}
+.chat-row:hover{background:var(--surface-hover);border-color:var(--line-strong)}
+.c-mid{flex:1;min-width:0}
+.c-r1{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}
+.c-title{font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.c-time{font-size:11px;color:var(--muted);flex:none;display:flex;align-items:center;gap:4px}
+.c-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.badge-cnt{background:var(--accent);color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px}
+.verified{
+  width:15px;height:15px;display:inline-grid;place-items:center;border-radius:50%;
+  background:linear-gradient(145deg,#38bdf8,#2563eb);color:#fff;flex:none;vertical-align:middle;
+}
+.verified svg{width:9px;height:9px;stroke:#fff;fill:none;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.pill-badge{font-size:11px;font-weight:700;padding:5px 10px;border-radius:999px;background:rgba(59,130,246,.16);color:var(--accent-soft);border:1px solid rgba(96,165,250,.24)}
+
+/* Cards & Wallets */
+.balance-card{
+  position:relative;overflow:hidden;border-radius:24px;padding:24px;margin-bottom:16px;
+  border:1px solid rgba(96,165,250,.28);
+  background:radial-gradient(360px 200px at 95% 0%,rgba(96,165,250,.25),transparent 65%),linear-gradient(145deg,#172546 0%,#0f172a 60%,#0b1120 100%);
+  color:#fff;box-shadow:0 20px 50px rgba(0,0,0,.35);
+}
+.balance-card.ccoin-theme{
+  border-color:rgba(243,200,108,.26);
+  background:radial-gradient(360px 200px at 95% 0%,rgba(243,200,108,.2),transparent 65%),linear-gradient(145deg,#23202d 0%,#141824 60%,#0b0f19 100%);
+}
+.balance-label{display:flex;justify-content:space-between;font-size:10px;letter-spacing:.12em;color:#a9bce0;font-weight:700;text-transform:uppercase}
+.balance{font-size:36px;font-weight:800;letter-spacing:-.04em;margin:10px 0 18px}
+.balance small{font-size:14px;color:#bdd0f4;font-weight:600}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+
+.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.card{background:var(--surface-elevated);border:1px solid var(--line);border-radius:18px;padding:18px}
+button.card{text-align:left;width:100%}
+button.card:hover{background:var(--surface-hover);border-color:var(--line-strong)}
+.card h3{font-size:13px;font-weight:700;margin:0 0 7px;display:flex;align-items:center;gap:8px}
+.card p{font-size:12px;line-height:1.6;color:var(--muted);margin:0}
+.inline-ico{width:15px;height:15px;stroke:var(--accent-soft);fill:none;stroke-width:1.9;flex:none}
+.empty{border:1px dashed var(--line-strong);border-radius:20px;padding:38px 18px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.6}
+.empty strong{display:block;color:var(--text);font-size:14px;margin-bottom:5px}
+
+/* Tabs & Gifts */
+.tabs{display:inline-flex;gap:4px;padding:4px;background:var(--surface-elevated);border:1px solid var(--line);border-radius:14px;margin-bottom:16px}
+.tabs button{padding:9px 15px;border-radius:10px;color:var(--muted);font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+.tabs button.active{background:rgba(59,130,246,.22);color:var(--text)}
+
+.gift-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.gift{
+  min-width:0;border:1px solid var(--line);border-radius:20px;
+  background:var(--surface-elevated);padding:12px;text-align:left;
+  display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;
+}
+.gift:hover{border-color:rgba(96,165,250,.45);transform:translateY(-3px)}
+.gift-art{height:104px;border-radius:14px;display:grid;place-items:center;overflow:hidden;background:rgba(8,12,22,.7)}
+.gift-art svg{width:100%;height:100%;display:block}
+.gift b{font-size:12.5px;font-weight:700}
+.gift-meta{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:auto}
+.gift-price{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#fde68a;padding:4px 8px;border-radius:8px;background:rgba(243,200,108,.12)}
+.gift-price svg{width:11px;height:11px;stroke:currentColor;fill:currentColor}
+.gift-price.nft-tag{color:#93c5fd;background:rgba(59,130,246,.16)}
+.gift-badge{position:absolute;top:16px;right:16px;font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.65);color:#fff;border:1px solid rgba(255,255,255,.15)}
+
+/* Profile & Orbit */
+.profile-hero-wrap{
+  padding:22px;border-radius:22px;background:var(--surface-elevated);border:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+}
+.orbit-box{position:relative;width:236px;height:126px;display:flex;align-items:center;justify-content:center;margin-bottom:8px}
+.orbit-ava{width:92px;height:92px;border-radius:30px;background:linear-gradient(145deg,#475569,#1e293b);overflow:hidden;display:grid;place-items:center;font-size:32px;font-weight:800;z-index:2;border:2px solid rgba(255,255,255,.16);color:#fff}
+.orbit-ava img{width:100%;height:100%;object-fit:cover}
+.orb-gift{position:absolute;width:34px;height:34px;border-radius:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);display:grid;place-items:center;overflow:hidden}
+.p-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 16px}
+
+/* Grouped iOS Lists */
+.settings-list{border-radius:20px;overflow:hidden;border:1px solid var(--line);background:var(--surface-elevated)}
+.setting{width:100%;display:flex;align-items:center;gap:13px;padding:13px 16px;text-align:left;border-bottom:1px solid var(--line)}
+.setting:last-child{border-bottom:0}
+button.setting:hover{background:var(--surface-hover)}
+.setting-ico{width:34px;height:34px;border-radius:10px;background:var(--surface-hover);display:grid;place-items:center;flex:none;color:var(--text-soft)}
+.setting-ico svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.setting strong{font-size:13px;font-weight:600;display:block}
+.setting small{font-size:11px;color:var(--muted);display:block;margin-top:2px}
+.arrow{margin-left:auto;color:var(--muted);font-size:14px}
+
+.history-list{display:grid;gap:8px;max-height:50dvh;overflow:auto}
+.history-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-radius:14px;background:var(--surface-elevated);border:1px solid var(--line)}
+.history-item b{font-size:12px;display:block}
+.history-item small{font-size:10.5px;color:var(--muted);display:block;margin-top:2px}
+
+/* Auth */
+.auth-wrap{min-height:100dvh;display:grid;place-items:center;padding:20px}
+.auth-box{width:min(460px,100%);padding:26px;border-radius:30px}
+.auth-brand{display:flex;justify-content:center;align-items:center;gap:11px;margin-bottom:14px}
+.auth-brand .logo{width:46px;height:46px}
+.auth-brand b{font-size:21px}
+.auth-title{text-align:center;font-size:22px;font-weight:800;letter-spacing:-.03em;margin:0 0 6px}
+.auth-sub{text-align:center;font-size:12px;color:var(--muted);margin:0 0 18px}
+.auth-tabs{display:flex;background:rgba(7,10,17,.5);border:1px solid var(--line);border-radius:14px;padding:4px;margin-bottom:14px}
+.auth-tabs button{flex:1;padding:10px;border-radius:10px;color:var(--muted);font-size:12px;font-weight:600}
+.auth-tabs button.active{background:rgba(59,130,246,.22);color:#fff}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ava-up{
+  width:84px;height:84px;border-radius:26px;background:var(--surface-elevated);
+  margin:0 auto 12px;display:grid;place-items:center;overflow:hidden;border:1px dashed rgba(96,165,250,.6);
+}
+.ava-up img{width:100%;height:100%;object-fit:cover}
+.ava-ph{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.ava-ph svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.7}
+
+/* Overlays & Chat Room */
+.overlay-screen{
+  position:fixed;inset:0;z-index:25;background:var(--bg);
+  display:flex;flex-direction:column;padding-top:env(safe-area-inset-top);
+  animation:viewIn .18s var(--ease);
+}
+.overlay-scroll{flex:1;overflow:auto;width:100%;max-width:860px;margin:0 auto;padding:18px 16px 32px}
+.chat-top{
+  min-height:66px;display:flex;align-items:center;gap:12px;padding:8px 16px;
+  border-bottom:1px solid var(--line);background:var(--surface);
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+}
+.room-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer}
+.r-title{font-size:14.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-sub{font-size:11px;color:var(--muted)}
+.gs-input{flex:1;background:transparent;border:0;outline:none;color:var(--text);font-size:14px}
+.pin-bar{
+  padding:8px 16px;background:var(--surface-elevated);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:10px;font-size:12.5px;
+}
+.pin-txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+
+.chat-messages{
+  flex:1;overflow:auto;padding:18px 16px;display:flex;flex-direction:column;gap:8px;
+  width:100%;max-width:860px;margin:0 auto;
+}
+.msg{
+  max-width:min(580px,82%);padding:10px 14px 8px;border-radius:18px;
+  font-size:var(--msg-fs);line-height:1.42;cursor:pointer;word-break:break-word;
+  border:1px solid var(--line);
+}
+.msg.in{align-self:flex-start;background:var(--in-bubble);border-bottom-left-radius:5px}
+.msg.out{align-self:flex-end;background:var(--out-bubble);color:#fff;border-bottom-right-radius:5px;border-color:transparent}
+.msg.sys{align-self:center;background:var(--surface-elevated);font-size:11.5px;padding:5px 12px;border-radius:999px;color:var(--muted)}
+.msg.selected{outline:2px solid var(--accent-soft)}
+.m-meta{float:right;font-size:10px;opacity:.7;margin:6px 0 -2px 10px}
+.m-img,.m-video{width:100%;max-height:260px;border-radius:12px;margin-bottom:6px;display:block;object-fit:cover}
+.r-box{border-left:2.5px solid var(--accent-soft);background:rgba(0,0,0,.22);padding:4px 8px;border-radius:6px;font-size:12px;margin-bottom:5px}
+.r-row{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;clear:both}
+.r-tag{background:rgba(59,130,246,.22);padding:2px 8px;border-radius:999px;font-size:12px}
+
+.sticker-tray{
+  max-width:860px;width:100%;margin:0 auto;background:var(--surface-solid);
+  border-top:1px solid var(--line);padding:10px 14px;
+  display:grid;grid-template-columns:repeat(8,1fr);gap:6px;max-height:150px;overflow-y:auto;
+}
+.composer-wrap{
+  border-top:1px solid var(--line);background:var(--surface);
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.composer{display:flex;gap:8px;max-width:860px;margin:0 auto;align-items:center}
+.comp-in{
+  flex:1;min-width:0;display:flex;align-items:center;
+  border:1px solid var(--line);border-radius:999px;background:rgba(7,10,17,.65);padding:2px 6px 2px 14px;
+}
+body.light .comp-in{background:#fff}
+.comp-in input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--text);padding:9px 4px 9px 0;font-size:13.5px}
+.send-c{
+  width:40px;height:40px;border-radius:50%;background:linear-gradient(145deg,#4f8ff7,#2563eb);
+  color:#fff;display:grid;place-items:center;flex:none;
+}
+.send-c svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.send-c.recording{background:var(--danger);animation:pulse .8s infinite}
+
+/* Stories Viewer & Call */
+.sv-top{padding:14px 16px;max-width:680px;width:100%;margin:0 auto}
+.sv-prog{height:3px;background:rgba(255,255,255,.2);border-radius:3px;overflow:hidden;margin-bottom:12px}
+.sv-fill{height:100%;background:#fff;width:0;transition:width .1s linear}
+.sv-hdr{display:flex;align-items:center;justify-content:space-between}
+.sv-media{flex:1;display:flex;align-items:center;justify-content:center;padding:18px;text-align:center;font-size:20px;font-weight:700;max-width:680px;width:100%;margin:0 auto}
+.sv-media img,.sv-media video{max-width:100%;max-height:70dvh;border-radius:18px}
+.sv-footer{padding:14px 16px calc(14px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:10px;max-width:680px;width:100%;margin:0 auto;border-top:1px solid var(--line)}
+
+.call-ov{
+  position:fixed;inset:0;z-index:90;
+  background:radial-gradient(circle at 50% 25%,rgba(37,99,235,.28),#05070c 70%);
+  color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:72px 24px 56px;
+}
+.call-btns{display:flex;gap:24px}
+.call-b{width:62px;height:62px;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;display:grid;place-items:center}
+.call-b.end{background:var(--danger)}
+.call-b svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
+
+/* Modals & Toast */
+.modal-back{
+  position:fixed;inset:0;z-index:60;background:rgba(3,5,10,.72);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:grid;place-items:center;padding:18px;
+}
+.modal{
+  width:min(470px,100%);max-height:88dvh;overflow:auto;border-radius:24px;
+  background:var(--surface-solid);border:1px solid var(--line-strong);padding:20px;box-shadow:var(--shadow);
+  animation:modalPop .2s var(--ease);
+}
+@keyframes modalPop{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}
+.sheet-handle{display:none;width:36px;height:4px;border-radius:99px;background:rgba(255,255,255,.22);margin:0 auto 12px}
+.modal-actions{display:flex;gap:8px;margin-top:12px}
+.modal-actions>*{flex:1}
+
+.toast{
+  position:fixed;z-index:99;bottom:calc(24px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
+  max-width:calc(100vw - 32px);background:rgba(20,27,42,.95);color:#fff;border:1px solid rgba(255,255,255,.15);
+  border-radius:999px;padding:11px 18px;font-size:12px;font-weight:600;text-align:center;box-shadow:0 16px 40px rgba(0,0,0,.5);
+}
+
+.bottom-nav{display:none}
+
+@media(max-width:780px){
+  .app{display:block;padding:0}
+  .sidebar{display:none}
+  .main{border:0;border-radius:0;min-height:100dvh;padding-bottom:calc(88px + env(safe-area-inset-bottom));background:transparent;box-shadow:none}
+  .topbar{height:64px;padding:0 16px}
+  .content{padding:16px 14px 24px}
+  .bottom-nav{
+    display:flex;position:fixed;z-index:12;left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom));
+    height:64px;padding:6px;border-radius:22px;background:rgba(14,19,31,.88);
+    backdrop-filter:blur(28px) saturate(170%);-webkit-backdrop-filter:blur(28px) saturate(170%);
+    border:1px solid var(--line-strong);box-shadow:0 16px 40px rgba(0,0,0,.5);justify-content:space-around;
+  }
+  body.light .bottom-nav{background:rgba(255,255,255,.92)}
+  .bottom-nav button{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    border-radius:16px;color:var(--muted);font-size:9.5px;font-weight:600;position:relative;
+  }
+  .bottom-nav button svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .bottom-nav button.active{color:var(--text);background:rgba(59,130,246,.2)}
+  .nav-badge{position:absolute;top:4px;right:calc(50% - 18px);background:var(--accent);color:#fff;font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:999px}
+  .nav-mini-ava{width:22px;height:22px;border-radius:8px;background:var(--surface-hover);overflow:hidden;display:grid;place-items:center;font-size:11px;font-weight:700}
+  .nav-mini-ava img{width:100%;height:100%;object-fit:cover}
+  .cards{grid-template-columns:1fr}
+  .gift-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .gift-art{height:98px}
+  .sticker-tray{grid-template-columns:repeat(6,1fr)}
+  .modal-back{padding:0;align-items:end}
+  .modal{width:100%;border-radius:26px 26px 0 0;padding:14px 18px calc(22px + env(safe-area-inset-bottom))}
+  .sheet-handle{display:block}
+  .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
+}
+
+3. public/app.js
+
+let token = localStorage.getItem('cw_token') || null;
+let currentUser = null, chats = [], contacts = [], blockedUsers = [], stories = [];
+let catalog = { regular: [], nft: [], market: [] }, myGifts = [], ws = null;
+let regAva = null, editAva = null, activeTab = 'chats', activeFolder = 'all', activeChatId = null;
+let activeCatalogTab = 'regular', replyToId = null, selectedMsgIds = new Set(), typingTimer = null;
+let mediaRecorder = null, recordedChunks = [], callTimer = null, callPeerId = null, callMuted = false, storyTimer = null;
+
+const STICKERS = ['🔥','❤️','😂','😍','😎','🥳','🤯','🥶','😭','🙏','👍','👎','⚡','💎','🚀','🎁','👑','💀','🐸','😈','🫡','👀','🤝','💯'];
+const REACTS = ['👍','❤️','🔥','😂','⚡','🎉'];
+
+const tabMeta = {
+  chats: ['Чаты', 'Ваши переписки, группы и каналы'],
+  contacts: ['Контакты', 'Люди и заблокированные пользователи'],
+  stars: ['Stars', 'Баланс Stars и история операций'],
+  gifts: ['Подарки и Маркет', 'Каталог подарков и торговая площадка'],
+  ccoins: ['C-Coins', 'Внутренняя валюта CW-Gram'],
+  profile: ['Профиль', 'Ваш профиль, истории и подарки'],
+  settings: ['Настройки', 'Аккаунт, приватность и сессии'],
+  admin: ['Админ-панель', 'Серверное управление CW-Gram']
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmtTime = ts => { if (!ts) return ''; const d = new Date(ts); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
+const fmtLast = u => !u ? '' : u.online ? 'в сети' : u.lastSeen ? 'был(а) в ' + fmtTime(u.lastSeen) : 'был(а) недавно';
+const verifiedSvg = '<span class="verified" title="Подтверждён"><svg viewBox="0 0 12 12"><path d="m2 6 2.4 2.4L10 3"/></svg></span>';
+const starMiniSvg = '<svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>';
+const fmtCurrencyLabel = s => String(s ?? '').replace(/TON/g, 'C-Coins');
+
+function showToast(m) {
+  const t = $('toast');
+  t.textContent = m;
+  t.classList.remove('hidden');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.classList.add('hidden'), 2500);
+}
+
+function openModal(h) { $('m-sheet').innerHTML = h; $('m-bg').classList.remove('hidden'); }
+function closeModal() { $('m-bg').classList.add('hidden'); }
+
+async function api(method, url, body = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    if (r.status === 401 && token) logout(true);
+    throw new Error(d.error || 'Ошибка сервера');
+  }
+  return d;
+}
+
+function uploadAvatarFile(inp, prevId, phId, cb) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas'), max = 360;
+      let w = img.width, h = img.height;
+      if (w > h && w > max) { h *= max / w; w = max; } else if (h > max) { w *= max / h; h = max; }
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      const url = c.toDataURL('image/jpeg', 0.8);
+      if (prevId) { const el = $(prevId); el.src = url; el.classList.remove('hidden'); }
+      if (phId) $(phId).classList.add('hidden');
+      cb(url);
+    };
+    img.src = e.target.result;
+  };
+  r.readAsDataURL(f);
+}
+
+// ==================== ВЕКТОРНЫЕ ИЛЛЮСТРАЦИИ ПОДАРКОВ ====================
+function giftSvgArtwork(g, sizePx = 80, uidTag = '') {
+  const palettes = [
+    ['#fb7185','#be123c'],['#a78bfa','#6d28d9'],['#fbbf24','#d97706'],['#34d399','#059669'],
+    ['#60a5fa','#2563eb'],['#f472b6','#db2777'],['#38bdf8','#0284c7'],['#c084fc','#7e22ce']
+  ];
+  const key = String(g?.slug || g?.regularId || g?.id || g?.name || 'gift');
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  const [a, b] = Array.isArray(g?.bg) && g.bg.length >= 2 ? [g.bg[0], g.bg[1]] : palettes[hash % palettes.length];
+  const [pa, pb] = palettes[hash % palettes.length];
+  const gid = 'gsvg-' + key.replace(/[^a-zA-Z0-9_-]/g, '') + '-' + (uidTag || Math.random().toString(36).slice(2, 7));
+
+  const regularMap = {
+    heart: `<path d="M90 125s-50-29-50-64c0-26 34-36 50-10 16-26 50-16 50 10 0 35-50 64-50 64Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".75" stroke-width="2.5"/>`,
+    teddy: `<ellipse cx="62" cy="44" rx="14" ry="18" fill="${pa}"/><ellipse cx="118" cy="44" rx="14" ry="18" fill="${pa}"/><circle cx="90" cy="66" r="32" fill="url(#${gid})"/><ellipse cx="90" cy="112" rx="38" ry="26" fill="url(#${gid})"/><circle cx="78" cy="61" r="4" fill="#0f172a"/><circle cx="102" cy="61" r="4" fill="#0f172a"/><ellipse cx="90" cy="73" rx="9" ry="7" fill="#fff" fill-opacity=".7"/>`,
+    giftbox: `<rect x="48" y="60" width="84" height="64" rx="11" fill="url(#${gid})"/><rect x="43" y="52" width="94" height="16" rx="6" fill="${pa}"/><path d="M90 52v72" stroke="#fff" stroke-width="7"/><path d="M90 52c-26 0-26-26-10-24 10 1 10 24 10 24Zm0 0c26 0 26-26 10-24-10 1-10 24-10 24Z" stroke="#fff" stroke-width="5" fill="none"/>`,
+    rose: `<path d="M90 92v42m0-16c-18-10-25-2-25-2m25-6c18-10 25-2 25-2" stroke="#34d399" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M90 94c-25 0-34-31-16-48 9 10 16 4 16-14 0 18 7 24 16 14 18 17 9 48-16 48Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".7" stroke-width="2"/>`,
+    cake: `<rect x="48" y="88" width="84" height="38" rx="9" fill="url(#${gid})"/><rect x="58" y="64" width="64" height="26" rx="8" fill="${pa}"/><path d="M90 36v26" stroke="#fff" stroke-width="5" stroke-linecap="round"/><path d="M90 22c6 7 6 14 0 17-6-3-6-10 0-17Z" fill="#fde047"/>`,
+    bouquet: `<path d="M62 76h56l-28 58Z" fill="#e2e8f0" fill-opacity=".85"/><circle cx="72" cy="60" r="15" fill="url(#${gid})"/><circle cx="108" cy="60" r="15" fill="${pa}"/><circle cx="90" cy="48" r="18" fill="#fff" fill-opacity=".9"/><circle cx="90" cy="48" r="7" fill="${pb}"/>`,
+    rocket: `<path d="M90 24c20 18 26 48 20 82H70c-6-34 0-64 20-82Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".75" stroke-width="2"/><circle cx="90" cy="64" r="10" fill="#dbeafe"/><path d="M70 92 50 110l18-2m42-16 20 18-18-2" fill="${pa}"/><path d="M82 108l8 26 8-26Z" fill="#fbbf24"/>`,
+    champagne: `<rect x="74" y="54" width="32" height="76" rx="10" fill="url(#${gid})"/><rect x="83" y="28" width="14" height="28" rx="4" fill="${pa}"/><rect x="82" y="24" width="16" height="8" rx="3" fill="#fde68a"/><rect x="77" y="78" width="26" height="22" rx="4" fill="#fff" fill-opacity=".8"/>`,
+    trophy: `<path d="M58 42h64v32c0 22-14 36-32 36S58 96 58 74Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".75" stroke-width="2"/><path d="M58 50H42c0 20 8 28 16 28m64-28h16c0 20-8 28-16 28M90 110v16m-22 4h44" stroke="#fde68a" stroke-width="6" fill="none" stroke-linecap="round"/>`,
+    ring: `<circle cx="90" cy="90" r="32" fill="none" stroke="url(#${gid})" stroke-width="11"/><path d="M76 50 90 32l14 18-14 14Z" fill="#e0f2fe" stroke="#fff" stroke-width="2"/>`,
+    gem: `<path d="M58 46h64l24 28-56 58-56-58Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".85" stroke-width="2.5"/><path d="M34 74h112M58 46l16 28 16 58m32-86-16 28-16 58" stroke="#fff" stroke-opacity=".55" stroke-width="2" fill="none"/>`
+  };
+
+  const nftMap = {
+    plushpepe: `<ellipse cx="90" cy="88" rx="34" ry="26" fill="url(#${gid})"/><circle cx="76" cy="64" r="11" fill="#fff"/><circle cx="104" cy="64" r="11" fill="#fff"/><circle cx="77" cy="64" r="5" fill="#0f172a"/><circle cx="103" cy="64" r="5" fill="#0f172a"/><path d="M70 96q20 12 40 0" stroke="#fb7185" stroke-width="4" fill="none" stroke-linecap="round"/>`,
+    heartlocket: `<path d="M72 64v-14a18 18 0 0 1 36 0v14" stroke="#fff" stroke-width="6" fill="none"/><path d="M90 120s-32-19-32-40c0-15 21-22 32-7 11-15 32-8 32 7 0 21-32 40-32 40Z" fill="url(#${gid})" stroke="#fff" stroke-width="2.5"/>`,
+    resistancedog: `<path d="M56 62 66 36l18 14h12l18-14 10 26v28c0 20-15 34-34 34s-34-14-34-34Z" fill="url(#${gid})"/><circle cx="77" cy="76" r="5" fill="#0f172a"/><circle cx="103" cy="76" r="5" fill="#0f172a"/><ellipse cx="90" cy="92" rx="9" ry="7" fill="#fff" fill-opacity=".85"/>`,
+    durovscap: `<path d="M50 92c0-26 18-42 40-42s40 16 40 42Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".75" stroke-width="2"/><path d="M46 92h88c10 0 14 14-8 14H54Z" fill="${pa}"/>`,
+    scaredcat: `<path d="M58 58 68 32l22 18 22-18 10 26v38c0 18-14 30-32 30s-32-12-32-30Z" fill="url(#${gid})"/><circle cx="77" cy="76" r="7" fill="#fff"/><circle cx="103" cy="76" r="7" fill="#fff"/><circle cx="77" cy="76" r="3" fill="#0f172a"/><circle cx="103" cy="76" r="3" fill="#0f172a"/>`,
+    preciouspeach: `<path d="M90 122c-26 0-40-20-40-44 0-22 18-34 40-24 22-10 40 2 40 24 0 24-14 44-40 44Z" fill="url(#${gid})"/><path d="M90 54c10-16 26-18 28-6-10 10-20 12-28 6Z" fill="#34d399"/>`,
+    heroichelmet: `<path d="M54 94c0-28 16-48 36-48s36 20 36 48l-14 16H68Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".7" stroke-width="2"/><path d="M90 36v52m-22-4h44" stroke="#fde047" stroke-width="5" stroke-linecap="round"/>`,
+    lootbag: `<path d="M68 48h44l-8 16 24 38c6 12-4 26-20 26H72c-16 0-26-14-20-26l24-38Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".65" stroke-width="2"/><path d="m90 78 5 11 12 2-9 8 2 12-10-6-10 6 2-12-9-8 12-2Z" fill="#fde047"/>`,
+    astralshard: `<path d="M90 22 124 68 108 134 72 134 56 68Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".85" stroke-width="2.5"/><path d="M90 22v112M56 68h68" stroke="#fff" stroke-opacity=".45" stroke-width="2"/>`,
+    swisswatch: `<rect x="74" y="24" width="32" height="112" rx="10" fill="${pb}"/><circle cx="90" cy="80" r="30" fill="#0f172a" stroke="${pa}" stroke-width="6"/><path d="M90 62v18l12 8" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/>`,
+    kissedfrog: `<ellipse cx="90" cy="88" rx="34" ry="26" fill="url(#${gid})"/><circle cx="72" cy="62" r="12" fill="${pa}"/><circle cx="108" cy="62" r="12" fill="${pa}"/><circle cx="72" cy="62" r="5" fill="#0f172a"/><circle cx="108" cy="62" r="5" fill="#0f172a"/><path d="M74 44l6-12 10 9 10-9 6 12Z" fill="#fde047"/>`,
+    vintagecigar: `<rect x="44" y="70" width="92" height="22" rx="11" fill="url(#${gid})"/><rect x="116" y="70" width="20" height="22" rx="8" fill="#fb7185"/><path d="M126 58q8-12 0-22" stroke="#cbd5e1" stroke-width="3" fill="none" stroke-linecap="round"/>`,
+    signetring: `<circle cx="90" cy="88" r="32" fill="none" stroke="url(#${gid})" stroke-width="13"/><rect x="74" y="42" width="32" height="24" rx="7" fill="${pa}" stroke="#fff" stroke-width="2"/>`,
+    electricskull: `<circle cx="90" cy="72" r="28" fill="#e2e8f0"/><rect x="74" y="94" width="32" height="18" rx="6" fill="#e2e8f0"/><circle cx="79" cy="70" r="6" fill="#0f172a"/><circle cx="101" cy="70" r="6" fill="#0f172a"/><path d="m92 32-8 16h10l-6 14" stroke="#60a5fa" stroke-width="4" fill="none" stroke-linecap="round"/>`,
+    eternalrose: `<rect x="62" y="34" width="56" height="86" rx="28" fill="rgba(255,255,255,.12)" stroke="#fff" stroke-opacity=".6" stroke-width="2"/><path d="M90 88v24" stroke="#34d399" stroke-width="4"/><path d="M90 86c-16 0-20-20-8-30 5 6 8 2 8-8 0 10 3 14 8 8 12 10 8 30-8 30Z" fill="url(#${gid})"/><rect x="54" y="118" width="72" height="10" rx="5" fill="${pb}"/>`,
+    khabibspapakha: `<path d="M46 98c0-34 16-54 44-54s44 20 44 54c0 12-10 18-44 18s-44-6-44-18Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".55" stroke-width="2"/><path d="M56 76q12-10 24 0t24 0 20 0" stroke="#fff" stroke-opacity=".45" stroke-width="3" fill="none"/>`,
+    easteregg: `<path d="M90 28c24 0 36 32 36 58 0 24-16 40-36 40S54 110 54 86c0-26 12-58 36-58Z" fill="url(#${gid})" stroke="#fff" stroke-opacity=".75" stroke-width="2"/><path d="m58 80 16-10 16 10 16-10 16 10" stroke="#fde68a" stroke-width="4" fill="none"/>`
+  };
+
+  const isNft = !!g?.isNft || !!g?.slug;
+  const regShape = regularMap[g?.regularId || g?.id] || `<path d="M90 26 112 66l44 6-32 31 8 44-42-22-42 22 8-44-32-31 44-6Z" fill="url(#${gid})"/>`;
+  const nftShape = nftMap[g?.slug] || `<path d="M90 22 124 68 108 134 72 134 56 68Z" fill="url(#${gid})" stroke="#fff" stroke-width="2"/>`;
+  const body = isNft
+    ? `<path d="M90 14 148 47 148 113 90 146 32 113 32 47Z" fill="${pa}" fill-opacity=".09" stroke="${pa}" stroke-opacity=".35" stroke-width="1.5"/>${nftShape}`
+    : regShape;
+
+  return `<svg style="width:${sizePx}px;height:${sizePx}px;display:block;flex:none" viewBox="0 0 180 160" role="img" aria-label="${esc(g?.name || 'Подарок')}"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${pa}"/><stop offset="1" stop-color="${pb}"/></linearGradient></defs><circle cx="90" cy="80" r="62" fill="${a}" fill-opacity=".22"/>${body}</svg>`;
+}
+
+function giftImgHtml(g, sz = 56) {
+  return giftSvgArtwork(g, sz);
+}
+
+// ==================== АВТОРИЗАЦИЯ И WEBSOCKET ====================
+function setAuthMode(m) {
+  $('tab-login').classList.toggle('active', m === 'login');
+  $('tab-reg').classList.toggle('active', m === 'reg');
+  $('form-login').classList.toggle('hidden', m !== 'login');
+  $('form-reg').classList.toggle('hidden', m !== 'reg');
+}
+
+async function handleLogin() {
+  try {
+    const res = await api('POST', '/api/auth/login', {
+      phone: $('l-phone').value,
+      password: $('l-pass').value,
+      cloudPassword: $('l-cloud').value
+    });
+    token = res.token;
+    localStorage.setItem('cw_token', token);
+    currentUser = res.user;
+    await bootApp();
+  } catch (e) { showToast(e.message); }
+}
+
+async function handleRegister() {
+  try {
+    const res = await api('POST', '/api/auth/register', {
+      phone: $('r-phone').value,
+      firstName: $('r-first').value,
+      lastName: $('r-last').value,
+      username: $('r-user').value,
+      bio: $('r-bio').value,
+      avatar: regAva,
+      password: $('r-pass').value,
+      cloudPassword: $('r-cloud').value
+    });
+    token = res.token;
+    localStorage.setItem('cw_token', token);
+    currentUser = res.user;
+    regAva = null;
+    await bootApp();
+  } catch (e) { showToast(e.message); }
+}
+
+function logout(silent = false) {
+  if (!silent && token) api('POST', '/api/auth/logout').catch(() => {});
+  token = null;
+  currentUser = null;
+  localStorage.removeItem('cw_token');
+  if (ws) { ws.close(); ws = null; }
+  closeChat();
+  closeModal();
+  closeGlobalSearch();
+  closePeerProfile();
+  closeStoryViewer();
+  $('call-overlay').classList.add('hidden');
+  $('app-shell').classList.add('hidden');
+  $('auth-screen').classList.remove('hidden');
+}
+
+function setWsIndicator(online) {
+  $('ws-status')?.classList.toggle('online', online);
+  $('ws-status-side')?.classList.toggle('online', online);
+}
+
+function connectWS() {
+  if (ws) ws.close();
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}?token=${encodeURIComponent(token)}`);
+  ws.onopen = () => setWsIndicator(true);
+  ws.onclose = () => { setWsIndicator(false); if (token) setTimeout(connectWS, 3000); };
+  ws.onmessage = ev => {
+    try {
+      const { event, payload } = JSON.parse(ev.data);
+      if (event === 'message:new') {
+        const c = chats.find(x => x.id === payload.chatId);
+        if (!c) return refreshAllData();
+        if (!c.messages.some(m => m.id === payload.message.id)) c.messages.push(payload.message);
+        if (activeChatId === payload.chatId) {
+          renderMessages();
+          api('POST', `/api/chats/${payload.chatId}/read`).catch(() => {});
+        } else if (payload.message.senderId !== currentUser.id) {
+          c.unread = (c.unread || 0) + 1;
+          if (currentUser.settings?.notifications !== false) {
+            showToast(`${c.title}: ${payload.message.text || 'Медиа'}`);
+          }
+        }
+        renderChats();
+      } else if (event === 'message:edit') {
+        const m = chats.find(x => x.id === payload.chatId)?.messages.find(m => m.id === payload.message.id);
+        if (m) { m.text = payload.message.text; m.edited = true; if (activeChatId === payload.chatId) renderMessages(); renderChats(); }
+      } else if (event === 'message:delete' && payload.forAll) {
+        const c = chats.find(x => x.id === payload.chatId);
+        if (c) { c.messages = c.messages.filter(m => m.id !== payload.msgId); if (activeChatId === payload.chatId) renderMessages(); renderChats(); }
+      } else if (event === 'message:react') {
+        const m = chats.find(x => x.id === payload.chatId)?.messages.find(m => m.id === payload.msgId);
+        if (m) { m.reactions = payload.reactions; if (activeChatId === payload.chatId) renderMessages(); }
+      } else if (event === 'message:read') {
+        const c = chats.find(x => x.id === payload.chatId);
+        if (c) { c.messages.forEach(m => { if (!m.readBy.includes(payload.userId)) m.readBy.push(payload.userId); }); if (activeChatId === payload.chatId) renderMessages(); }
+      } else if (event === 'chat:pin') {
+        const c = chats.find(x => x.id === payload.chatId);
+        if (c) { c.pinnedMessageId = payload.pinnedMessageId; if (activeChatId === payload.chatId) renderPinnedBar(c); }
+      } else if (event === 'chat:new') {
+        if (!chats.some(c => c.id === payload.id)) chats.unshift(payload);
+        renderChats();
+      } else if (event === 'typing' && activeChatId === payload.chatId) {
+        const c = chats.find(x => x.id === payload.chatId);
+        if (c) $('r-sub').textContent = payload.isTyping ? 'печатает...' : (c.type === 'dm' ? fmtLast(c.peer) : `${c.members.length} участн.`);
+      } else if (event === 'presence') {
+        chats.forEach(c => { if (c.peer?.id === payload.userId) { c.peer.online = payload.online; c.peer.lastSeen = payload.lastSeen; } });
+        contacts.forEach(u => { if (u.id === payload.userId) { u.online = payload.online; u.lastSeen = payload.lastSeen; } });
+        renderContacts();
+      } else if (event === 'user:update') {
+        currentUser = payload;
+        applySettings();
+        refreshAllData();
+      } else if (event === 'call:signal') {
+        onWsCall(payload);
+      }
+    } catch {}
+  };
+}
+
+async function bootApp() {
+  $('auth-screen').classList.add('hidden');
+  $('app-shell').classList.remove('hidden');
+  $('chats-skeleton').classList.remove('hidden');
+  connectWS();
+  await refreshAllData();
+  $('chats-skeleton').classList.add('hidden');
+  switchTab(activeTab || 'chats');
+}
+
+async function refreshAllData() {
+  const [meR, chR, coR, stR, catR] = await Promise.all([
+    api('GET', '/api/auth/me'),
+    api('GET', '/api/chats'),
+    api('GET', '/api/contacts'),
+    api('GET', '/api/stories'),
+    api('GET', '/api/catalog')
+  ]);
+  currentUser = meR.user;
+  chats = chR.chats;
+  contacts = coR.contacts;
+  blockedUsers = coR.blocked;
+  stories = stR.stories;
+  catalog = catR;
+  const uR = await api('GET', `/api/users/${currentUser.id}`);
+  myGifts = uR.user.gifts || [];
+  applySettings();
+  renderAll();
+}
+
+function applySettings() {
+  if (!currentUser) return;
+  const s = currentUser.settings || {};
+  document.body.classList.toggle('light', s.theme === 'light');
+  document.documentElement.style.setProperty('--msg-fs', (s.fontSize || 15) + 'px');
+  $('theme-sub').textContent = `${s.theme === 'light' ? 'Светлая' : 'Тёмная'} • ${s.fontSize || 15}px`;
+  $('notif-sub').textContent = s.notifications !== false ? 'Включены' : 'Выключены';
+  $('dl-sub').textContent = `Автозагрузка: ${s.autoDownload !== false ? 'Вкл' : 'Выкл'}`;
+}
+
+function renderAll() {
+  if (!currentUser) return;
+  const fullName = `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || 'Пользователь';
+  const avaHtml = currentUser.avatar ? `<img src="${esc(currentUser.avatar)}" alt="">` : esc((currentUser.firstName?.[0] || 'C').toUpperCase());
+  $('nav-ava').innerHTML = avaHtml;
+  $('side-ava').innerHTML = avaHtml;
+  $('side-name').textContent = fullName;
+  $('side-stars').textContent = (currentUser.stars || 0).toLocaleString('ru-RU');
+  $('side-coins').textContent = (currentUser.ton || 0).toLocaleString('ru-RU');
+  $('adminNav').classList.toggle('hidden', !currentUser.isAdmin);
+
+  const tot = chats.filter(c => !c.archived).reduce((s, c) => s + (c.unread || 0), 0);
+  $('nav-unread-badge').textContent = tot;
+  $('nav-unread-badge').classList.toggle('hidden', tot === 0);
+  $('side-unread-badge').textContent = tot;
+  $('side-unread-badge').classList.toggle('hidden', tot === 0);
+
+  renderStories();
+  renderChats();
+  renderContacts();
+  renderStarsView();
+  renderCatalogView();
+  renderCcoinsView();
+  renderSettings();
+  renderProfile();
+}
+
+function switchTab(t) {
+  if (t === 'admin' && !currentUser?.isAdmin) {
+    showToast('Доступ запрещён');
+    return;
+  }
+  activeTab = t;
+  ['chats', 'contacts', 'stars', 'gifts', 'ccoins', 'profile', 'settings', 'admin'].forEach(x => {
+    $('view-' + x)?.classList.toggle('hidden', x !== t);
+  });
+  document.querySelectorAll('#sideNav [data-tab], .sidebar [data-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === t);
+  });
+  ['chats', 'contacts', 'gifts', 'profile', 'settings'].forEach(x => {
+    $('nav-' + x)?.classList.toggle('active', x === t);
+  });
+  if (tabMeta[t]) {
+    $('topbar-title').textContent = tabMeta[t][0];
+    $('topbar-sub').textContent = tabMeta[t][1];
+  }
+  if (t === 'admin' && currentUser?.isAdmin) loadAdminOverview();
+  window.scrollTo(0, 0);
+}
+
+// ==================== ИСТОРИИ ====================
+function renderStories() {
+  const ava = currentUser.avatar ? `<img src="${esc(currentUser.avatar)}" alt="">` : esc((currentUser.firstName?.[0] || 'C').toUpperCase());
+  $('stories-strip').innerHTML =
+    `<button type="button" class="st-node" onclick="openCreateStoryModal()"><div class="st-ring"><div class="st-core">${ava}</div></div><div class="st-txt">+ История</div></button>` +
+    stories.map((s, i) => `<button type="button" class="st-node" onclick="openStoryViewer(${i})"><div class="st-ring ${(s.viewers || []).includes(currentUser.id) ? 'seen' : ''}"><div class="st-core">${s.authorAvatar ? `<img src="${esc(s.authorAvatar)}" alt="">` : esc((s.authorName || 'U')[0])}</div></div><div class="st-txt">${esc(s.authorName)}</div></button>`).join('');
+}
+
+function openCreateStoryModal() {
+  openModal(`
+    <h3 style="margin:0 0 12px">Новая история</h3>
+    <label class="field-label" for="st-txt">Текст истории</label>
+    <input id="st-txt" class="field" placeholder="Текст истории" />
+    <label class="field-label" for="st-priv">Кто видит историю</label>
+    <select id="st-priv" class="field">
+      <option value="everybody">Все</option>
+      <option value="contacts">Контакты</option>
+    </select>
+    <input id="st-file" type="file" accept="image/*,video/*" class="hidden" onchange="publishMediaStory(this)" />
+    <label style="display:flex;align-items:center;gap:8px;margin:4px 0 12px;font-size:12.5px">
+      <input type="checkbox" id="st-save" checked /> Сохранить в профиле
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn secondary" onclick="$('st-file').click()">Фото / Видео</button>
+      <button type="button" class="btn" onclick="publishTextStory()">Опубликовать</button>
+    </div>
+  `);
+}
+
+async function publishTextStory() {
+  const text = $('st-txt').value.trim();
+  if (!text) return showToast('Введите текст');
+  try {
+    await api('POST', '/api/stories', { type: 'text', text, privacy: $('st-priv').value, savedToProfile: $('st-save').checked });
+    closeModal();
+    await refreshAllData();
+    showToast('История опубликована');
+  } catch (e) { showToast(e.message); }
+}
+
+function publishMediaStory(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = async e => {
+    try {
+      const up = await api('POST', '/api/upload', { dataUrl: e.target.result, fileName: f.name });
+      await api('POST', '/api/stories', {
+        type: f.type.startsWith('video') ? 'video' : 'photo',
+        text: $('st-txt').value.trim(),
+        mediaUrl: up.url,
+        privacy: $('st-priv').value,
+        savedToProfile: $('st-save').checked
+      });
+      closeModal();
+      await refreshAllData();
+      showToast('История опубликована');
+    } catch (err) { showToast(err.message); }
+  };
+  r.readAsDataURL(f);
+}
+
+function openStoryViewer(i) {
+  const s = stories[i]; if (!s) return;
+  api('POST', `/api/stories/${s.id}/view`).catch(() => {});
+  if (!s.viewers.includes(currentUser.id)) s.viewers.push(currentUser.id);
+  renderStories();
+  $('sv-ava').innerHTML = s.authorAvatar ? `<img src="${esc(s.authorAvatar)}" alt="">` : esc((s.authorName || 'U')[0]);
+  $('sv-author').textContent = s.authorName;
+  $('sv-time').textContent = fmtTime(s.createdAt);
+  $('sv-media').innerHTML = s.type === 'photo' && s.mediaUrl
+    ? `<div><img src="${esc(s.mediaUrl)}" alt=""><p style="margin-top:12px;font-size:15px">${esc(s.text)}</p></div>`
+    : s.type === 'video' && s.mediaUrl
+      ? `<video src="${esc(s.mediaUrl)}" controls autoplay></video>`
+      : `<div class="card" style="padding:28px;border-radius:22px;background:linear-gradient(135deg,#172546,#0f172a)">${esc(s.text)}</div>`;
+  $('sv-footer').innerHTML = `<span class="muted small">Просмотров: ${s.viewers.length}</span><span style="flex:1"></span><button type="button" class="btn secondary" onclick="closeStoryViewer()">Закрыть</button>`;
+  $('story-viewer').classList.remove('hidden');
+  let p = 0;
+  $('sv-progress').style.width = '0%';
+  clearInterval(storyTimer);
+  storyTimer = setInterval(() => {
+    p += 2;
+    $('sv-progress').style.width = p + '%';
+    if (p >= 100) closeStoryViewer();
+  }, 100);
+}
+
+function closeStoryViewer() {
+  clearInterval(storyTimer);
+  $('story-viewer').classList.add('hidden');
+}
+
+// ==================== ЧАТЫ И ПЕРЕПИСКА ====================
+function setFolder(f, el) {
+  activeFolder = f;
+  document.querySelectorAll('.folder').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  renderChats();
+}
+
+function renderChats() {
+  const list = chats
+    .filter(c => activeFolder === 'archived' ? c.archived : (!c.archived && (activeFolder === 'all' || c.type === activeFolder)))
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  $('chats-list').innerHTML = list.length ? list.map(c => {
+    const last = c.messages[c.messages.length - 1];
+    const sub = last
+      ? (last.type === 'gift' ? `Подарок: ${last.giftSnapshot?.name || ''}` : last.type === 'photo' ? 'Фото' : last.type === 'video' ? 'Видео' : last.type === 'voice' ? 'Голосовое сообщение' : last.type === 'file' ? `Файл: ${last.fileName || ''}` : last.text)
+      : 'Нет сообщений';
+    const ava = c.type === 'saved'
+      ? '<svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#fff;fill:none;stroke-width:2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'
+      : (c.avatar ? `<img src="${esc(c.avatar)}" alt="">` : esc((c.title?.[0] || 'C').toUpperCase()));
+    return `
+      <button type="button" class="chat-row" onclick="openChat('${esc(c.id)}')">
+        <div class="ava" style="background:${esc(c.color || '#2563eb')}">${ava}${c.peer?.online ? '<span class="online-dot"></span>' : ''}</div>
+        <div class="c-mid">
+          <div class="c-r1">
+            <div class="c-title">${esc(c.title)} ${c.peer?.verified ? verifiedSvg : ''} ${c.muted ? '<span class="muted small">(без звука)</span>' : ''}</div>
+            <div class="c-time">${last && last.senderId === currentUser.id ? `<span style="color:var(--accent-soft)">${last.readBy?.length > 1 ? '✓✓' : '✓'}</span>` : ''} ${last ? fmtTime(last.createdAt) : ''} ${c.pinned ? '<span class="muted">•</span>' : ''}</div>
+          </div>
+          <div class="c-r1" style="margin:0">
+            <div class="c-sub">${esc(sub)}</div>
+            ${c.unread ? `<span class="badge-cnt">${c.unread}</span>` : ''}
+          </div>
+        </div>
+      </button>`;
+  }).join('') : '<div class="empty"><strong>Чатов пока нет</strong>Создайте группу, канал или начните диалог через поиск.</div>';
+}
+
+function openChatsMenu() {
+  openModal(`
+    <h3 style="margin:0 0 12px">Действия</h3>
+    <button type="button" class="btn" style="width:100%;margin-bottom:8px" onclick="closeModal();openNewChatModal()">Создать группу / канал</button>
+    <button type="button" class="btn secondary" style="width:100%" onclick="closeModal();joinByCodePrompt()">Войти по коду приглашения</button>
+  `);
+}
+
+function openNewChatModal() {
+  const mem = contacts.map(u => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px"><input type="checkbox" class="nc-m" value="${esc(u.id)}"> ${esc(u.firstName)} ${esc(u.lastName)}</label>`).join('');
+  openModal(`
+    <h3 style="margin:0 0 12px">Создать группу или канал</h3>
+    <label class="field-label" for="nc-t">Тип</label>
+    <select id="nc-t" class="field"><option value="group">Группа</option><option value="channel">Канал</option></select>
+    <label class="field-label" for="nc-n">Название *</label>
+    <input id="nc-n" class="field" placeholder="Название" />
+    <label class="field-label" for="nc-d">Описание</label>
+    <input id="nc-d" class="field" placeholder="Описание (необязательно)" />
+    <label class="field-label" for="nc-p">Доступ</label>
+    <select id="nc-p" class="field"><option value="true">Публичный</option><option value="false">Приватный</option></select>
+    ${mem ? `<div class="field-label">Участники</div><div style="max-height:130px;overflow:auto;margin-bottom:10px">${mem}</div>` : ''}
+    <button type="button" class="btn" style="width:100%" onclick="createChatGroup()">Создать</button>
+  `);
+}
+
+async function createChatGroup() {
+  try {
+    const res = await api('POST', '/api/chats/create', {
+      type: $('nc-t').value,
+      title: $('nc-n').value,
+      description: $('nc-d').value,
+      isPublic: $('nc-p').value === 'true',
+      memberIds: Array.from(document.querySelectorAll('.nc-m:checked')).map(x => x.value)
+    });
+    chats.unshift(res.chat);
+    closeModal();
+    renderChats();
+    openChat(res.chat.id);
+  } catch (e) { showToast(e.message); }
+}
+
+function joinByCodePrompt() {
+  openModal(`
+    <h3 style="margin:0 0 12px">Вступить по коду</h3>
+    <input id="jc-i" class="field" placeholder="ID чата или код приглашения" />
+    <button type="button" class="btn" style="width:100%" onclick="doJoin()">Вступить</button>
+  `);
+}
+
+async function doJoin() {
+  try {
+    const code = $('jc-i').value.trim();
+    const r = await api('POST', `/api/chats/${encodeURIComponent(code)}/join`, { inviteCode: code });
+    await refreshAllData();
+    closeModal();
+    openChat(r.chat.id);
+  } catch (e) { showToast(e.message); }
+}
+
+function openChat(id) {
+  activeChatId = id;
+  const c = chats.find(x => x.id === id);
+  if (!c) return;
+  c.unread = 0;
+  api('POST', `/api/chats/${id}/read`).catch(() => {});
+  renderAll();
+  $('r-name').textContent = c.title;
+  $('r-sub').textContent = c.type === 'saved' ? 'облачное хранилище' : c.type === 'dm' ? fmtLast(c.peer) : `${c.members.length} участн.`;
+  $('r-ava').style.background = c.color || '#2563eb';
+  $('r-ava').innerHTML = c.type === 'saved'
+    ? '<svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'
+    : (c.avatar ? `<img src="${esc(c.avatar)}" alt="">` : esc((c.title?.[0] || 'C').toUpperCase()));
+  clearSelection();
+  cancelReply();
+  closeChatSearch();
+  renderPinnedBar(c);
+  $('chat-room').classList.remove('hidden');
+  renderMessages();
+}
+
+function closeChat() {
+  $('chat-room').classList.add('hidden');
+  $('sticker-tray').classList.add('hidden');
+  activeChatId = null;
+}
+
+function renderPinnedBar(c) {
+  const pm = c.pinnedMessageId ? c.messages.find(m => m.id === c.pinnedMessageId) : null;
+  $('r-pinned-bar').classList.toggle('hidden', !pm);
+  if (pm) $('r-pinned-txt').textContent = pm.text || 'Медиа';
+}
+
+async function unpinChatMsg() {
+  await api('POST', `/api/chats/${activeChatId}/pin`, { msgId: null });
+  const c = chats.find(x => x.id === activeChatId);
+  if (c) { c.pinnedMessageId = null; renderPinnedBar(c); }
+}
+
+function scrollToPinned() {
+  const c = chats.find(x => x.id === activeChatId);
+  $('msg_' + c?.pinnedMessageId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderMessages() {
+  const c = chats.find(x => x.id === activeChatId); if (!c) return;
+  const q = ($('r-search-inp').value || '').toLowerCase();
+  const list = q ? c.messages.filter(m => (m.text || '').toLowerCase().includes(q)) : c.messages;
+  const wrap = $('msgs-list');
+  wrap.innerHTML = list.map(m => {
+    if (m.type === 'system') return `<div class="msg sys">${esc(m.text)}</div>`;
+    const isOut = m.senderId === currentUser.id;
+    const rep = m.replyToId ? c.messages.find(x => x.id === m.replyToId) : null;
+    const reacts = Object.entries(m.reactions || {}).map(([em, ids]) =>
+      `<span class="r-tag" onclick="event.stopPropagation();reactMsg('${esc(m.id)}','${esc(em)}')">${esc(em)} ${ids.length}</span>`
+    ).join('');
+    let b = '';
+    if (m.forwardedFrom) b += `<div class="muted small" style="margin-bottom:3px">Переслано от ${esc(m.forwardedFrom)}</div>`;
+    if (rep) b += `<div class="r-box">${esc(rep.text || 'Медиа')}</div>`;
+    if (m.type === 'photo' && m.mediaUrl) b += `<img class="m-img" src="${esc(m.mediaUrl)}" alt="">`;
+    if (m.type === 'video' && m.mediaUrl) b += `<video class="m-video" src="${esc(m.mediaUrl)}" controls></video>`;
+    if (m.type === 'voice' && m.mediaUrl) b += `<audio controls src="${esc(m.mediaUrl)}" style="max-width:220px;height:36px"></audio>`;
+    if (m.type === 'file' && m.mediaUrl) b += `<a href="${esc(m.mediaUrl)}" download="${esc(m.fileName || 'file')}" style="color:var(--accent-soft);font-weight:600;display:block;margin-bottom:4px">Файл: ${esc(m.fileName || 'Файл')}</a>`;
+    if (m.type === 'gift' && m.giftSnapshot) {
+      const g = m.giftSna
