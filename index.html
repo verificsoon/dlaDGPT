@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <title>CW-Gram</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="phone-shell">
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <!-- ЭКРАН АВТОРИЗАЦИИ И ПРЕЖНЯЯ РЕГИСТРАЦИЯ CW-GRAM -->
+    <div id="auth-screen" class="auth">
+      <div class="auth-brand"><div class="cw-logo">C</div><b>CW-Gram</b></div>
+      <h1 class="auth-title">Добро пожаловать в CW-Gram</h1>
+      <p class="auth-sub">Здравствуйте! Рады приветствовать вас в нашем мессенджере. Общайтесь, создавайте сообщества и оставайтесь на связи в одном защищённом пространстве.</p>
+
+      <div class="notice-card">
+        <div class="notice-title">Официальный проект CW-Gram <span class="v-badge" id="notice-verified"></span></div>
+        <p>Серверная авторизация, чаты в реальном времени, подарки, Stars и C-Coins. Стартовые бонусы появятся после включения на сервере.</p>
+      </div>
+
+      <div class="seg">
+        <button type="button" id="tab-login" class="seg-b active" onclick="setAuthMode('login')">Войти</button>
+        <button type="button" id="tab-reg" class="seg-b" onclick="setAuthMode('reg')">Регистрация</button>
+      </div>
+
+      <form id="form-login" onsubmit="event.preventDefault();handleLogin()">
+        <label class="field-label" for="l-phone">Номер телефона</label>
+        <input id="l-phone" class="field" type="tel" placeholder="+7 900 000-00-00" autocomplete="tel" required />
+        <label class="field-label" for="l-pass">Пароль</label>
+        <input id="l-pass" class="field" type="password" placeholder="Пароль аккаунта" autocomplete="current-password" required />
+        <label class="field-label" for="l-cloud">Облачный пароль (2FA)</label>
+        <input id="l-cloud" class="field" type="password" placeholder="Облачный пароль" autocomplete="off" required />
+        <button type="submit" class="btn1" id="btn-login">Войти в CW-Gram</button>
+      </form>
+
+      <form id="form-reg" class="hidden" onsubmit="event.preventDefault();handleRegister()">
+        <button type="button" class="ava-up" onclick="$('reg-file').click()" aria-label="Выбрать фото">
+          <img id="reg-prev" class="hidden" alt="Аватар" />
+          <span id="reg-ph" class="ava-ph">
+            <svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            <span>Фото</span>
+          </span>
+        </button>
+        <input id="reg-file" type="file" accept="image/*" class="hidden" onchange="uploadAvatarFile(this,'reg-prev','reg-ph',v=>regAva=v)" />
+
+        <label class="field-label" for="r-first">Имя *</label>
+        <input id="r-first" class="field" type="text" placeholder="Как к вам обращаться?" autocomplete="given-name" required />
+        <label class="field-label" for="r-last">Фамилия</label>
+        <input id="r-last" class="field" type="text" placeholder="Фамилия (необязательно)" autocomplete="family-name" />
+        <label class="field-label" for="r-user">Username</label>
+        <input id="r-user" class="field" type="text" placeholder="@username" autocomplete="username" />
+        <label class="field-label" for="r-bio">О себе</label>
+        <input id="r-bio" class="field" type="text" placeholder="О себе (необязательно)" />
+        <label class="field-label" for="r-phone">Номер телефона *</label>
+        <input id="r-phone" class="field" type="tel" placeholder="+7 900 000-00-00" autocomplete="tel" required />
+        <label class="field-label" for="r-pass">Пароль *</label>
+        <input id="r-pass" class="field" type="password" placeholder="Пароль аккаунта" autocomplete="new-password" required />
+        <label class="field-label" for="r-cloud">Облачный пароль (2FA) *</label>
+        <input id="r-cloud" class="field" type="password" placeholder="Обязателен для входа" autocomplete="new-password" required />
+        <button type="submit" class="btn1" id="btn-reg">Создать аккаунт</button>
+      </form>
+    </div>
+
+    <!-- ОСНОВНАЯ ОБОЛОЧКА -->
+    <div id="app-shell" class="shell hidden">
+      <!-- ЧАТЫ -->
+      <section id="view-chats" class="scroll">
+        <div class="topbar">
+          <div class="top-left">
+            <span class="v-badge lg" id="brand-badge"></span>
+            <span class="page-h">CW-Gram</span>
+            <span id="ws-status" class="ws-dot" title="Статус WebSocket"></span>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="t-btn" onclick="openChatsMenu()" aria-label="Меню">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <button type="button" class="search-pill" onclick="openGlobalSearch()">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+          <span>Поиск чатов</span>
+        </button>
+
+        <div id="stories-strip" class="stories-strip"></div>
+
+        <div id="chat-folders" class="folders">
+          <button type="button" class="folder active" onclick="setFolder('all',this)">Все</button>
+          <button type="button" class="folder" onclick="setFolder('dm',this)">Личные</button>
+          <button type="button" class="folder" onclick="setFolder('group',this)">Группы</button>
+          <button type="button" class="folder" onclick="setFolder('channel',this)">Каналы</button>
+          <button type="button" class="folder" onclick="setFolder('archived',this)">Архив</button>
+        </div>
+
+        <div id="chats-skeleton" class="hidden">
+          <div class="skel-row"><div class="skel-ava"></div><div class="skel-lines"><div></div><div></div></div></div>
+          <div class="skel-row"><div class="skel-ava"></div><div class="skel-lines"><div></div><div></div></div></div>
+        </div>
+
+        <div id="chats-list"></div>
+
+        <div class="fabs">
+          <button type="button" class="fab-sm" onclick="openCreateStoryModal()" aria-label="История">
+            <svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          </button>
+          <button type="button" class="fab-lg" onclick="openNewChatModal()" aria-label="Новый чат">
+            <svg viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H6l-3 2v-6.5A8.5 8.5 0 1 1 21 11.5Z"/><path d="M12 8.5v6M9 11.5h6"/></svg>
+          </button>
+        </div>
+      </section>
+
+      <!-- КОНТАКТЫ -->
+      <section id="view-contacts" class="scroll hidden">
+        <div class="topbar">
+          <span class="page-h">Контакты</span>
+          <div class="top-actions">
+            <button type="button" class="t-btn" onclick="openAddContactModal()" aria-label="Добавить контакт">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="search-pill">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+          <input id="contacts-search" placeholder="Поиск по имени, @username или номеру" oninput="renderContacts()" />
+        </div>
+        <div id="contacts-list"></div>
+        <div id="blocked-section" class="hidden">
+          <div class="sec-hdr" style="padding:12px 16px 6px">Заблокированные</div>
+          <div id="blocked-list"></div>
+        </div>
+      </section>
+
+      <!-- НАСТРОЙКИ -->
+      <section id="view-settings" class="scroll hidden">
+        <div class="topbar">
+          <span class="page-h">Настройки</span>
+          <div class="top-actions">
+            <button type="button" class="t-btn" onclick="openGlobalSearch()" aria-label="Поиск">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+            </button>
+            <button type="button" class="t-btn" onclick="openSettingsMoreMenu()" aria-label="Ещё">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="set-hero" class="set-hero"></div>
+
+        <div class="card-blk">
+          <button type="button" class="set-row" onclick="openAccountSubscreen()">
+            <span class="set-ico" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.7-4 3.2-6 7.5-6s6.8 2 7.5 6"/></svg></span>
+            <span class="set-txt"><div class="set-t">Аккаунт</div><div class="set-s">Номер, имя пользователя, «О себе»</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="openChatAppearanceModal()">
+            <span class="set-ico" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z"/></svg></span>
+            <span class="set-txt"><div class="set-t">Настройки чатов</div><div class="set-s" id="set-theme-sub">Тёмная тема • 15px</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="openPrivacySubscreen()">
+            <span class="set-ico" style="background:#30d158"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+            <span class="set-txt"><div class="set-t">Конфиденциальность</div><div class="set-s">Приватность, пароли, устройства</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="toggleUserSetting('notifications')">
+            <span class="set-ico" style="background:#ff453a"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg></span>
+            <span class="set-txt"><div class="set-t">Уведомления</div><div class="set-s" id="set-notif-sub">Включены</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="toggleUserSetting('autoDownload')">
+            <span class="set-ico" style="background:#0a84ff"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
+            <span class="set-txt"><div class="set-t">Данные и память</div><div class="set-s" id="set-dl-sub">Автозагрузка: Вкл</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="openSessionsModal()">
+            <span class="set-ico" style="background:#45c4cc;color:#000"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
+            <span class="set-txt"><div class="set-t">Устройства</div><div class="set-s">Активные серверные сеансы</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="showToast('Язык: Русский')">
+            <span class="set-ico" style="background:#af52de"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span>
+            <span class="set-txt"><div class="set-t">Язык</div><div class="set-s">Русский</div></span>
+          </button>
+        </div>
+
+        <div class="card-blk">
+          <button type="button" class="set-row" onclick="openPremiumModal()">
+            <span class="set-ico" style="background:#7c3aed"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg></span>
+            <span class="set-txt"><div class="set-t">CW-Gram Premium</div><div class="set-s" id="set-prem-sub">Эксклюзивные возможности</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="openStarsSubscreen('all')">
+            <span class="set-ico" style="background:#f59e0b"><svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg></span>
+            <span class="set-txt"><div class="set-t">Звёзды CW-Gram</div></span>
+            <span id="set-stars" class="cyan-val tabular">0</span>
+          </button>
+          <button type="button" class="set-row" onclick="openCcoinsSubscreen('all')">
+            <span class="set-ico" style="background:#0ea5e9"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5a4.5 4.5 0 1 0 0 7M8 12h7"/></svg></span>
+            <span class="set-txt"><div class="set-t">Мои C-Coins</div></span>
+            <span id="set-ccoins" class="cyan-val tabular">0</span>
+          </button>
+          <button type="button" class="set-row" onclick="openGiftShop('regular',null)">
+            <span class="set-ico" style="background:#f97316"><svg viewBox="0 0 24 24"><path d="M3 10h18v11H3zM2 6h20v4H2zM12 6v15M12 6H7.5a2.5 2.5 0 1 1 2.5-2.5V6Zm0 0h4.5A2.5 2.5 0 1 0 14 3.5V6Z"/></svg></span>
+            <span class="set-txt"><div class="set-t">Отправить подарок</div><div class="set-s">Магазин и Маркет</div></span>
+          </button>
+        </div>
+
+        <div class="card-blk">
+          <div class="sec-hdr">Помощь</div>
+          <button type="button" class="set-row" onclick="openCallsHistoryModal()">
+            <span class="set-ico" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></span>
+            <span class="set-txt"><div class="set-t">История звонков</div></span>
+          </button>
+          <button type="button" class="set-row" onclick="openAboutModal()">
+            <span class="set-ico" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+            <span class="set-txt"><div class="set-t">О приложении CW-Gram</div></span>
+          </button>
+        </div>
+
+        <div id="owner-blk" class="card-blk hidden">
+          <div class="sec-hdr">Управление</div>
+          <button type="button" class="set-row" onclick="openAdminSubscreen()">
+            <span class="set-ico" style="background:var(--gold);color:#000"><svg viewBox="0 0 24 24"><path d="M12 3 20 7v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z"/></svg></span>
+            <span class="set-txt"><div class="set-t">Панель управления CW-Gram</div><div class="set-s">Пользователи, Stars, C-Coins, NFT, рассылка, аудит</div></span>
+          </button>
+        </div>
+
+        <div class="card-blk">
+          <button type="button" class="set-row" onclick="logout()">
+            <span class="set-ico" style="background:rgba(255,69,58,.18);color:var(--red)"><svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M21 4v16"/></svg></span>
+            <span class="set-txt"><div class="set-t" style="color:var(--red)">Выйти из аккаунта</div></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ПРОФИЛЬ -->
+      <section id="view-profile" class="scroll hidden">
+        <div class="topbar" style="background:transparent">
+          <button type="button" class="t-btn" onclick="openQrModal()" aria-label="Поделиться">
+            <svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 14h2v2h-2zM16 16h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z"/></svg>
+          </button>
+          <button type="button" class="t-btn" onclick="openAccountSubscreen()" aria-label="Редактировать">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+
+        <div id="profile-hero" class="p-hero"></div>
+
+        <div class="p-actions">
+          <button type="button" class="p-act" onclick="$('quick-ava-file').click()">
+            <svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            Выбрать фото
+          </button>
+          <input id="quick-ava-file" type="file" accept="image/*" class="hidden" onchange="quickAvatarChange(this)" />
+          <button type="button" class="p-act" onclick="openAccountSubscreen()">
+            <svg viewBox="0 0 24 24"><path d="m14.5 5.5 4 4L7 21H3v-4L14.5 5.5Z"/></svg>
+            Изменить
+          </button>
+          <button type="button" class="p-act" onclick="switchTab('settings')">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19 13.5 1.2 1-.9 1.6-1.5-.3-1.2 1.2.3 1.5-1.6.9-1-1.2h-1.7l-1 1.2-1.6-.9.3-1.5-1.2-1.2-1.5.3-.9-1.6 1.2-1v-1.7l-1.2-1 .9-1.6 1.5.3 1.2-1.2-.3-1.5 1.6-.9 1 1.2h1.7l1-1.2 1.6.9-.3 1.5 1.2 1.2 1.5.3.9 1.6-1.2 1v1.7Z"/></svg>
+            Настройки
+          </button>
+        </div>
+
+        <div id="profile-info-card" class="card-blk"></div>
+
+        <div class="p-subtabs">
+          <button type="button" id="ps-posts" class="p-stab" onclick="setProfileTab('posts')">Истории</button>
+          <button type="button" id="ps-gifts" class="p-stab active" onclick="setProfileTab('gifts')">Подарки <span id="tab-gifts-mini" style="display:inline-flex;gap:2px"></span></button>
+        </div>
+
+        <div id="p-tab-posts" class="hidden"><div id="saved-stories-grid" class="g-grid"></div></div>
+
+        <div id="p-tab-gifts">
+          <div class="g-filters">
+            <span class="g-pill">Все подарки</span>
+            <button type="button" class="link-btn" onclick="openGiftShop('nft',null)">+ Магазин / Маркет</button>
+          </div>
+          <div id="profile-gifts-grid" class="g-grid"></div>
+          <button type="button" class="send-gifts-fab" onclick="openGiftShop('regular',null)">
+            <svg viewBox="0 0 24 24"><path d="M3 10h18v11H3zM2 6h20v4H2zM12 6v15M12 6H7.5a2.5 2.5 0 1 1 2.5-2.5V6Zm0 0h4.5A2.5 2.5 0 1 0 14 3.5V6Z"/></svg>
+            Отправить подарки
+          </button>
+        </div>
+      </section>
+
+      <!-- ПАРЯЩАЯ НИЖНЯЯ ТАБЛЕТКА (4 ВКЛАДКИ) -->
+      <nav class="nav-pill">
+        <button type="button" class="nav-i active" id="nav-chats" onclick="switchTab('chats')">
+          <span id="nav-unread-badge" class="nav-badge hidden">0</span>
+          <svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z"/></svg>
+          Чаты
+        </button>
+        <button type="button" class="nav-i" id="nav-contacts" onclick="switchTab('contacts')">
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-3.5 2.7-5.3 6.5-5.3s6 1.8 6.5 5.3M17 5.5a3.5 3.5 0 0 1 0 6.8M17 15c2.5.3 4 2 4.5 5"/></svg>
+          Контакты
+        </button>
+        <button type="button" class="nav-i" id="nav-settings" onclick="switchTab('settings')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19 13.5 1.2 1-.9 1.6-1.5-.3-1.2 1.2.3 1.5-1.6.9-1-1.2h-1.7l-1 1.2-1.6-.9.3-1.5-1.2-1.2-1.5.3-.9-1.6 1.2-1v-1.7l-1.2-1 .9-1.6 1.5.3 1.2-1.2-.3-1.5 1.6-.9 1 1.2h1.7l1-1.2 1.6.9-.3 1.5 1.2 1.2 1.5.3.9 1.6-1.2 1v1.7Z"/></svg>
+          Настройки
+        </button>
+        <button type="button" class="nav-i" id="nav-profile" onclick="switchTab('profile')">
+          <div class="nav-mini-ava" id="nav-ava">C</div>
+          Профиль
+        </button>
+      </nav>
+    </div>
+
+    <!-- ПОДЭКРАН -->
+    <div id="sub-screen" class="overlay-screen hidden">
+      <div class="topbar">
+        <div class="top-left">
+          <button type="button" class="t-btn" onclick="closeSubscreen()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+          <span class="page-h" id="sub-title">Раздел</span>
+        </div>
+        <div id="sub-actions" class="top-actions"></div>
+      </div>
+      <div id="sub-body" class="scroll" style="padding-bottom:32px"></div>
+    </div>
+
+    <!-- ГЛОБАЛЬНЫЙ ПОИСК -->
+    <div id="global-search-screen" class="overlay-screen hidden">
+      <div class="topbar">
+        <button type="button" class="t-btn" onclick="closeGlobalSearch()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+        <input id="gs-input" class="gs-input" placeholder="Поиск людей, чатов, сообщений..." oninput="runGlobalSearch()" />
+      </div>
+      <div id="gs-results" class="scroll" style="padding:8px 0 30px"></div>
+    </div>
+
+    <!-- ПРОФИЛЬ СОБЕСЕДНИКА -->
+    <div id="peer-profile-screen" class="overlay-screen hidden">
+      <div class="topbar">
+        <div class="top-left">
+          <button type="button" class="t-btn" onclick="closePeerProfile()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+          <span class="page-h">Профиль</span>
+        </div>
+        <button type="button" class="t-btn" id="peer-more-btn" aria-label="Ещё">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
+      <div id="peer-profile-body" class="scroll" style="padding-bottom:30px"></div>
+    </div>
+
+    <!-- ОКНО ЧАТА -->
+    <div id="chat-room" class="overlay-screen hidden">
+      <div class="topbar">
+        <div class="room-left" onclick="openActiveChatInfo()">
+          <button type="button" class="t-btn" onclick="event.stopPropagation();closeChat()" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+          <div id="r-ava" class="ava sm"></div>
+          <div style="min-width:0">
+            <div id="r-name" class="r-title"></div>
+            <div id="r-sub" class="r-sub">в сети</div>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="t-btn" onclick="openChatSearch()" aria-label="Поиск"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg></button>
+          <button type="button" class="t-btn" id="r-call-btn" onclick="startVoiceCallFromRoom()" aria-label="Вызов"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></button>
+          <button type="button" class="t-btn" onclick="openChatOptions()" aria-label="Настройки чата"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+        </div>
+      </div>
+
+      <div id="r-search-bar" class="pin-bar hidden">
+        <input id="r-search-inp" class="gs-input" placeholder="Поиск по переписке..." oninput="renderMessages()" />
+        <button type="button" class="t-btn" onclick="closeChatSearch()" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+
+      <div id="r-pinned-bar" class="pin-bar hidden">
+        <div class="pin-txt" onclick="scrollToPinned()">Закреплено: <span id="r-pinned-txt"></span></div>
+        <button type="button" class="t-btn" onclick="unpinChatMsg()" aria-label="Открепить"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+
+      <div id="r-select-bar" class="pin-bar hidden" style="background:var(--cyan-bg)">
+        <span id="r-select-count" style="font-weight:700;color:var(--cyan)">Выбрано: 0</span>
+        <div style="display:flex;gap:8px;margin-left:auto">
+          <button type="button" class="link-btn" onclick="forwardSelected()">Переслать</button>
+          <button type="button" class="link-btn" style="color:var(--red)" onclick="deleteSelected()">Удалить</button>
+          <button type="button" class="t-btn" onclick="clearSelection()" aria-label="Отмена"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+      </div>
+
+      <div id="msgs-list" class="msgs"></div>
+
+      <div id="r-reply-bar" class="pin-bar hidden">
+        <div class="pin-txt"><span style="color:var(--cyan);font-weight:700">Ответ:</span> <span id="r-reply-txt"></span></div>
+        <button type="button" class="t-btn" onclick="cancelReply()" aria-label="Отмена"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+
+      <div id="sticker-tray" class="sticker-tray hidden"></div>
+
+      <div id="r-readonly-bar" class="pin-bar hidden" style="justify-content:center;color:var(--muted)">
+        Публикация в этом канале доступна только администраторам.
+      </div>
+
+      <div id="r-composer-wrap" class="comp">
+        <button type="button" class="t-btn" onclick="openAttachMenu()" aria-label="Прикрепить">
+          <svg viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input id="c-media-file" type="file" accept="image/*,video/*" class="hidden" onchange="uploadChatMedia(this)" />
+        <input id="c-doc-file" type="file" class="hidden" onchange="uploadChatDoc(this)" />
+        <button type="button" class="t-btn" onclick="toggleStickers()" aria-label="Стикеры">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+        </button>
+        <div class="comp-in">
+          <input id="m-inp" placeholder="Сообщение" oninput="onMessageInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();sendTextMessage()}" />
+          <button type="button" class="t-btn" onclick="openGiftShop('regular',activeChatId)" aria-label="Подарок">
+            <svg viewBox="0 0 24 24"><path d="M3 10h18v11H3zM2 6h20v4H2zM12 6v15M12 6H7.5a2.5 2.5 0 1 1 2.5-2.5V6Zm0 0h4.5A2.5 2.5 0 1 0 14 3.5V6Z"/></svg>
+          </button>
+        </div>
+        <button type="button" id="btn-voice" class="send-c" onclick="toggleVoiceRecord()" aria-label="Голос">
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/></svg>
+        </button>
+        <button type="button" id="btn-send" class="send-c hidden" onclick="sendTextMessage()" aria-label="Отправить">
+          <svg viewBox="0 0 24 24"><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ПРОСМОТР ИСТОРИИ -->
+    <div id="story-viewer" class="overlay-screen hidden" style="z-index:70">
+      <div class="sv-top">
+        <div class="sv-prog"><div id="sv-progress" class="sv-fill"></div></div>
+        <div class="sv-hdr">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div id="sv-ava" class="ava sm"></div>
+            <div><div id="sv-author" style="font-weight:700;font-size:14.5px"></div><div id="sv-time" class="muted" style="font-size:11.5px"></div></div>
+          </div>
+          <button type="button" class="t-btn" onclick="closeStoryViewer()" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+      </div>
+      <div id="sv-media" class="sv-media"></div>
+      <div id="sv-footer" class="sv-footer"></div>
+    </div>
+
+    <!-- ЭКРАН СИГНАЛЬНОГО ВЫЗОВА -->
+    <div id="call-overlay" class="call-ov hidden">
+      <div style="text-align:center">
+        <div id="call-ava" class="ava lg" style="margin:0 auto 14px"></div>
+        <div id="call-name" style="font-size:24px;font-weight:700"></div>
+        <div id="call-status" class="muted" style="font-size:14px;margin-top:6px">Сигнальный вызов...</div>
+        <p class="muted" style="font-size:12px;max-width:280px;margin:12px auto 0;line-height:1.45">Передаются сигналы WebSocket без WebRTC-аудиопотока.</p>
+      </div>
+      <div class="call-btns">
+        <button type="button" class="call-b end" onclick="endCall(false)" aria-label="Завершить">
+          <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- BOTTOM SHEET MODAL -->
+    <div id="m-bg" class="m-bg hidden" onclick="if(event.target===this)closeModal()">
+      <div class="m-sheet">
+        <div class="handle"></div>
+        <div id="m-sheet"></div>
+      </div>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
